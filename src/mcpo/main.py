@@ -514,7 +514,7 @@ async def run(
             logger.warning("Invalid JSON format for headers. Headers will be ignored.")
             headers = None
 
-    # Inline Echo endpoint (avoids packaging/import issues)
+    # Inline Echo and Ping endpoints (avoid packaging/import issues)
     @main_app.post("/echo", tags=["tools"], summary="Echo")
     async def echo(req: Request, _=Depends(api_dependency) if api_dependency else None):
         try:
@@ -527,6 +527,12 @@ async def run(
                 "now_utc": __import__("datetime").datetime.utcnow().isoformat() + "Z",
             }
         )
+
+    @main_app.get("/ping", tags=["tools"], summary="Ping")
+    async def ping(_=Depends(api_dependency) if api_dependency else None):
+        return {"ok": True}
+
+    logger.info("Echo/Ping routes registered")
 
     if server_type == "sse":
         logger.info(f"Configuring for a single SSE MCP Server with URL {server_command[0]}")
