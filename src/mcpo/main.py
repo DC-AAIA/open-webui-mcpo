@@ -9,8 +9,9 @@ from typing import Optional, Dict, Any
 from urllib.parse import urljoin
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.routing import Mount
 
 from mcp import ClientSession, StdioServerParameters
@@ -25,9 +26,6 @@ from mcpo.utils.main import (
     normalize_server_type,
 )
 from mcpo.utils.config_watcher import ConfigWatcher
-
-# NEW: import the echo router
-from mcpo.routes_echo import router as echo_router
 
 logger = logging.getLogger(__name__)
 
@@ -516,6 +514,20 @@ async def run(
             logger.warning("Invalid JSON format for headers. Headers will be ignored.")
             headers = None
 
+    # Inline Echo endpoint (avoids packaging/import issues)
+    @main_app.post("/echo", tags=["tools"], summary="Echo")
+    async def echo(req: Request, _=Depends(api_dependency) if api_dependency else None):
+        try:
+            body = await req.json()
+        except Exception:
+            body = {}
+        return JSONResponse(
+            {
+                "received": body,
+                "now_utc": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
     if server_type == "sse":
         logger.info(f"Configuring for a single SSE MCP Server with URL {server_command[0]}")
         main_app.state.server_type = "sse"
@@ -565,12 +577,6 @@ async def run(
     else:
         logger.error("MCPO server_command or config_path must be provided.")
         raise ValueError("You must provide either server_command or config.")
-
-    # NEW: include the echo router with the same Bearer dependency if present
-    main_app.include_router(
-        echo_router,
-        dependencies=[Depends(api_dependency)] if api_dependency else [],
-    )
 
     # Setup hot reload for config files if enabled
     config_watcher = None
