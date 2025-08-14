@@ -21,6 +21,10 @@ RUN node -v && npm -v
 COPY . /app
 WORKDIR /app
 
+# Cache-bust layer to ensure fresh build on deploy
+ARG BUILD_REV=2025-08-14T15-35-00Z
+ENV BUILD_REV=${BUILD_REV}
+
 # Create virtual environment explicitly in known location
 ENV VIRTUAL_ENV=/app/.venv
 RUN uv venv "$VIRTUAL_ENV"
