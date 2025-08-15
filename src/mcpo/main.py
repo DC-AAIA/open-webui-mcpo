@@ -12,6 +12,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel  # ADDED
 from starlette.routing import Mount
 
 from mcp import ClientSession, StdioServerParameters
@@ -70,13 +71,17 @@ def load_config(config_path: str) -> Dict[str, Any]:
     try:
         with open(config_path, "r") as f:
             config_data = json.load(f)
+
         mcp_servers = config_data.get("mcpServers", {})
         if not mcp_servers:
             logger.error(f"No 'mcpServers' found in config file: {config_path}")
             raise ValueError("No 'mcpServers' found in config file.")
+
         for server_name, server_cfg in mcp_servers.items():
             validate_server_config(server_name, server_cfg)
+
         return config_data
+
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config file {config_path}: {e}")
         raise
@@ -104,6 +109,7 @@ def create_sub_app(
         version="1.0",
         lifespan=lifespan,
     )
+
     sub_app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_allow_origins or ["*"],
@@ -140,6 +146,7 @@ def create_sub_app(
 
     sub_app.state.api_dependency = api_dependency
     sub_app.state.connection_timeout = connection_timeout
+
     return sub_app
 
 
@@ -155,6 +162,7 @@ def mount_config_servers(
     path_prefix: str,
 ):
     mcp_servers = config_data.get("mcpServers", {})
+
     logger.info("Configuring MCP Servers:")
     for server_name, server_cfg in mcp_servers.items():
         sub_app = create_sub_app(
@@ -241,10 +249,16 @@ async def reload_config_handler(main_app: FastAPI, new_config_data: Dict[str, An
 
         main_app.state.config_data = new_config_data
         logger.info("Config reload completed successfully")
+
     except Exception as e:
         logger.error(f"Error during config reload, keeping previous configuration: {e}")
         main_app.router.routes = backup_routes
         raise
+
+
+# ADDED: explicit response model for /time to guarantee object output
+class TimeResponse(BaseModel):
+    now_utc: str
 
 
 async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
@@ -288,6 +302,59 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                 outputSchema.get("$defs", {}),
             )
 
+        # SPECIAL-CASE: /time — ensure JSON object output with now_utc
+        if endpoint_name == "time":
+            # Create a manual handler that calls the tool and normalizes the response.
+            async def time_handler(
+                req: Request,
+                _=Depends(api_dependency) if api_dependency else None,
+            ):
+                try:
+                    body = await req.json()
+                except Exception:
+                    body = {}
+
+                if not isinstance(body, dict):
+                    body = {}
+
+                # Call the MCP tool directly
+                result = await session.call_tool("time", arguments=body)
+
+                # Normalize to object
+                if isinstance(result, str):
+                    return {"now_utc": result}
+                if isinstance(result, dict) and "now_utc" in result:
+                    return result
+                # Fallback: coerce to string
+                return {"now_utc": str(result)}
+
+            app.post(
+                f"/{endpoint_name}",
+                summary="Time",
+                description=endpoint_description or "Returns current time.",
+                response_model=TimeResponse,  # guarantees object response
+                response_model_exclude_none=True,
+                dependencies=[Depends(api_dependency)] if api_dependency else [],
+                responses={
+                    200: {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"now_utc": {"type": "string"}},
+                                    "required": ["now_utc"],
+                                }
+                            }
+                        },
+                    }
+                },
+            )(time_handler)
+
+            # Skip standard handler for /time since we registered a custom one
+            continue
+
+        # Default handler for all other tools
         tool_handler = get_tool_handler(
             session,
             endpoint_name,
@@ -312,10 +379,10 @@ async def lifespan(app: FastAPI):
     args = args if isinstance(args, list) else [args]
     env = getattr(app.state, "env", {})
     connection_timeout = getattr(app.state, "connection_timeout", 10)
-    api_dependency = getattr(app.state, "api_dependency", None)
+    api_depen­dency = getattr(app.state, "api_dependency", None)
     path_prefix = getattr(app.state, "path_prefix", "/")
-
     shutdown_handler = getattr(app.state, "shutdown_handler", None)
+
     is_main_app = not command and not (server_type in ["sse", "streamable-http"] and args)
 
     if is_main_app:
@@ -353,13 +420,13 @@ async def lifespan(app: FastAPI):
                         )
                         exceptions = getattr(e, "exceptions", [])
                         for idx, exc in enumerate(exceptions):
-                            logger.error(f" Error {idx + 1}: {type(exc).__name__}: {exc}")
+                            logger.error(f"  Error {idx + 1}: {type(exc).__name__}: {exc}")
                             if hasattr(exc, "__traceback__"):
                                 import traceback
 
                                 tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
                                 for line in tb_lines:
-                                    logger.debug(f" {line.rstrip()}")
+                                    logger.debug(f"    {line.rstrip()}")
                     else:
                         logger.error(
                             f"Failed to establish connection for server: '{server_name}' - {type(e).__name__}: {e}",
@@ -372,6 +439,7 @@ async def lifespan(app: FastAPI):
                 logger.info("Successfully connected to:")
                 for name in successful_servers:
                     logger.info(f" - {name}")
+
                 app.description += "\n\n- **available tools**："
                 for name in successful_servers:
                     docs_path = urljoin(path_prefix, f"{name}/docs")
@@ -385,8 +453,8 @@ async def lifespan(app: FastAPI):
 
             if not successful_servers:
                 logger.error("No MCP servers could be reached.")
-
             yield
+
     else:
         app.state.is_connected = False
         try:
@@ -413,7 +481,7 @@ async def lifespan(app: FastAPI):
             async with client_context as (reader, writer, *_):
                 async with ClientSession(reader, writer) as session:
                     app.state.session = session
-                    await create_dynamic_endpoints(app, api_dependency=api_dependency)
+                    await create_dynamic_endpoints(app, api_dependency=api_depen­dency)
                     app.state.is_connected = True
                     yield
         except Exception as e:
@@ -450,6 +518,7 @@ async def run(
     name = kwargs.get("name") or "MCP OpenAPI Proxy"
     description = kwargs.get("description") or "Automatically generated API from MCP Tool Schemas"
     version = kwargs.get("version") or "1.0"
+
     ssl_certfile = kwargs.get("ssl_certfile")
     ssl_keyfile = kwargs.get("ssl_keyfile")
     path_prefix = kwargs.get("path_prefix") or "/"
@@ -622,6 +691,7 @@ async def run(
         shutdown_handler.track_task(server_task)
 
         shutdown_wait_task = asyncio.create_task(shutdown_handler.shutdown_event.wait())
+
         done, pending = await asyncio.wait(
             [server_task, shutdown_wait_task],
             return_when=asyncio.FIRST_COMPLETED,
