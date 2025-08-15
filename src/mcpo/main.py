@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel  # ADDED
+from pydantic import BaseModel
 from starlette.routing import Mount
 
 from mcp import ClientSession, StdioServerParameters
@@ -256,7 +256,7 @@ async def reload_config_handler(main_app: FastAPI, new_config_data: Dict[str, An
         raise
 
 
-# ADDED: explicit response model for /time to guarantee object output
+# Response model to guarantee /time returns an object
 class TimeResponse(BaseModel):
     now_utc: str
 
@@ -302,9 +302,8 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                 outputSchema.get("$defs", {}),
             )
 
-        # SPECIAL-CASE: /time — ensure JSON object output with now_utc
+        # SPECIAL-CASE: /time — normalize to object response
         if endpoint_name == "time":
-            # Create a manual handler that calls the tool and normalizes the response.
             async def time_handler(
                 req: Request,
                 _=Depends(api_dependency) if api_dependency else None,
@@ -313,26 +312,22 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                     body = await req.json()
                 except Exception:
                     body = {}
-
                 if not isinstance(body, dict):
                     body = {}
 
-                # Call the MCP tool directly
                 result = await session.call_tool("time", arguments=body)
 
-                # Normalize to object
                 if isinstance(result, str):
                     return {"now_utc": result}
                 if isinstance(result, dict) and "now_utc" in result:
                     return result
-                # Fallback: coerce to string
                 return {"now_utc": str(result)}
 
             app.post(
                 f"/{endpoint_name}",
                 summary="Time",
                 description=endpoint_description or "Returns current time.",
-                response_model=TimeResponse,  # guarantees object response
+                response_model=TimeResponse,
                 response_model_exclude_none=True,
                 dependencies=[Depends(api_dependency)] if api_dependency else [],
                 responses={
@@ -350,11 +345,9 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                     }
                 },
             )(time_handler)
-
-            # Skip standard handler for /time since we registered a custom one
             continue
 
-        # Default handler for all other tools
+        # Default handler for other tools
         tool_handler = get_tool_handler(
             session,
             endpoint_name,
@@ -379,7 +372,7 @@ async def lifespan(app: FastAPI):
     args = args if isinstance(args, list) else [args]
     env = getattr(app.state, "env", {})
     connection_timeout = getattr(app.state, "connection_timeout", 10)
-    api_depen­dency = getattr(app.state, "api_dependency", None)
+    api_dependency = getattr(app.state, "api_dependency", None)
     path_prefix = getattr(app.state, "path_prefix", "/")
     shutdown_handler = getattr(app.state, "shutdown_handler", None)
 
@@ -423,7 +416,6 @@ async def lifespan(app: FastAPI):
                             logger.error(f"  Error {idx + 1}: {type(exc).__name__}: {exc}")
                             if hasattr(exc, "__traceback__"):
                                 import traceback
-
                                 tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
                                 for line in tb_lines:
                                     logger.debug(f"    {line.rstrip()}")
@@ -481,7 +473,7 @@ async def lifespan(app: FastAPI):
             async with client_context as (reader, writer, *_):
                 async with ClientSession(reader, writer) as session:
                     app.state.session = session
-                    await create_dynamic_endpoints(app, api_dependency=api_depen­dency)
+                    await create_dynamic_endpoints(app, api_dependency=api_dependency)
                     app.state.is_connected = True
                     yield
         except Exception as e:
@@ -583,9 +575,11 @@ async def run(
             logger.warning("Invalid JSON format for headers. Headers will be ignored.")
             headers = None
 
-    # Inline Echo and Ping endpoints (avoid packaging/import issues)
+    # Inline Echo and Ping endpoints
+    require_auth = api_dependency if (api_dependency and strict_auth) else None
+
     @main_app.post("/echo", tags=["tools"], summary="Echo")
-    async def echo(req: Request, _=Depends(api_dependency) if api_dependency else None):
+    async def echo(req: Request, _=Depends(require_auth) if require_auth else None):
         try:
             body = await req.json()
         except Exception:
@@ -598,7 +592,7 @@ async def run(
         )
 
     @main_app.get("/ping", tags=["tools"], summary="Ping")
-    async def ping(_=Depends(api_dependency) if api_dependency else None):
+    async def ping(_=Depends(require_auth) if require_auth else None):
         return {"ok": True}
 
     logger.info("Echo/Ping routes registered")
