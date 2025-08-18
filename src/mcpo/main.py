@@ -1,4 +1,4 @@
-# main.py_v0.0.26
+# main.py_v0.0.27
 
 import asyncio
 import json
@@ -48,9 +48,9 @@ class GracefulShutdown:
 
 
 # -------------------------------------------------------------------
-# All support functions (validate_server_config, load_config,
-# create_sub_app, mount_config_servers, unmount_servers,
-# reload_config_handler) remain unchanged from v0.0.25
+# validate_server_config, load_config, create_sub_app,
+# mount_config_servers, unmount_servers, reload_config_handler
+# remain unchanged from v0.0.26
 # -------------------------------------------------------------------
 
 
@@ -114,39 +114,25 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
 
                 result = await session.call_tool("time", arguments=body)
 
-                # --- Robust normalizer v0.0.26 ---
-                if isinstance(result, str):
-                    return {"now_utc": result}
+                # --- Force extraction from TextContent ---
+                try:
+                    if result and getattr(result, "content", None):
+                        first = result.content[0]
+                        if hasattr(first, "text") and first.text:
+                            return {"now_utc": first.text}
+                except Exception as e:
+                    logger.warning(f"/time force extract failed: {e}")
 
+                # If dict (rare but supported)
                 if isinstance(result, dict) and "now_utc" in result:
                     return result
 
-                # Direct attribute extraction
-                if hasattr(result, "content") and result.content:
-                    first = result.content[0]
-                    if hasattr(first, "text") and first.text:
-                        return {"now_utc": first.text}
+                if isinstance(result, str):
+                    return {"now_utc": result}
 
-                # Dict-based extraction
-                if isinstance(result, dict) and "content" in result and result["content"]:
-                    first = result["content"][0]
-                    if isinstance(first, dict) and "text" in first:
-                        return {"now_utc": first["text"]}
-
-                # Pydantic .dict() export
-                if hasattr(result, "dict"):
-                    try:
-                        data = result.dict()
-                        if "content" in data and data["content"]:
-                            first = data["content"][0]
-                            if isinstance(first, dict) and "text" in first:
-                                return {"now_utc": first["text"]}
-                    except Exception as e:
-                        logger.warning(f"/time: .dict() export failed: {e}")
-
-                # Last resort: stringify full object
+                # Final fallback
                 return {"now_utc": str(result)}
-                # ---------------------------------
+                # -----------------------------------------
 
             app.post(
                 f"/{endpoint_name}",
@@ -176,6 +162,6 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
 
 
 # -------------------------------------------------------------------
-# lifespan(), run(), echo/ping routes remain identical to v0.0.25
+# lifespan(), run(), echo/ping routes are identical to v0.0.26
+# (unchanged, and confirmed working)
 # -------------------------------------------------------------------
-# (Copy straight from v0.0.25 since they were confirmed working)
