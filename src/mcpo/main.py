@@ -1,4 +1,4 @@
-# main.py_v0.0.24
+# main.py_v0.0.25
 
 import asyncio
 import json
@@ -47,13 +47,113 @@ class GracefulShutdown:
         task.add_done_callback(self.tasks.discard)
 
 
-# unchanged: validate_server_config, load_config, create_sub_app, mount_config_servers, unmount_servers, reload_config_handler ...
+def validate_server_config(server_name: str, server_cfg: Dict[str, Any]) -> None:
+    server_type = server_cfg.get("type")
+    if normalize_server_type(server_type) in ("sse", "streamable-http"):
+        if not server_cfg.get("url"):
+            raise ValueError(
+                f"Server '{server_name}' of type '{server_type}' requires a 'url' field"
+            )
+    elif server_cfg.get("command"):
+        if not isinstance(server_cfg["command"], str):
+            raise ValueError(f"Server '{server_name}' 'command' must be a string")
+        if server_cfg.get("args") and not isinstance(server_cfg["args"], list):
+            raise ValueError(f"Server '{server_name}' 'args' must be a list")
+    elif server_cfg.get("url") and not server_type:
+        # Fallback for old SSE config without explicit type
+        pass
+    else:
+        raise ValueError(
+            f"Server '{server_name}' must have either 'command' for stdio "
+            f"or 'type' and 'url' for remote servers"
+        )
 
 
-# --- PATCH: Ensure /time returns a proper JSON object ---
+def load_config(config_path: str) -> Dict[str, Any]:
+    try:
+        with open(config_path, "r") as f:
+            config_data = json.load(f)
+
+        mcp_servers = config_data.get("mcpServers", {})
+        if not mcp_servers:
+            logger.error(f"No 'mcpServers' found in config file: {config_path}")
+            raise ValueError("No 'mcpServers' found in config file.")
+
+        for server_name, server_cfg in mcp_servers.items():
+            validate_server_config(server_name, server_cfg)
+
+        return config_data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in config file {config_path}: {e}")
+        raise
+    except FileNotFoundError:
+        logger.error(f"Config file not found: {config_path}")
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid configuration: {e}")
+        raise
+
+
+def create_sub_app(
+    server_name: str,
+    server_cfg: Dict[str, Any],
+    cors_allow_origins,
+    api_key: Optional[str],
+    strict_auth: bool,
+    api_dependency,
+    connection_timeout,
+    lifespan,
+) -> FastAPI:
+    sub_app = FastAPI(
+        title=f"{server_name}",
+        description=f"{server_name} MCP Server\n\n- [back to tool list](/docs)",
+        version="1.0",
+        lifespan=lifespan,
+    )
+
+    sub_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_allow_origins or ["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    if server_cfg.get("command"):
+        sub_app.state.server_type = "stdio"
+        sub_app.state.command = server_cfg["command"]
+        sub_app.state.args = server_cfg.get("args", [])
+        sub_app.state.env = {**os.environ, **server_cfg.get("env", {})}
+
+    server_config_type = server_cfg.get("type")
+    if server_config_type == "sse" and server_cfg.get("url"):
+        sub_app.state.server_type = "sse"
+        sub_app.state.args = [server_cfg["url"]]
+        sub_app.state.headers = server_cfg.get("headers")
+    elif normalize_server_type(server_config_type) == "streamable-http" and server_cfg.get("url"):
+        url = server_cfg["url"]
+        sub_app.state.server_type = "streamablehttp"
+        sub_app.state.args = [url]
+        sub_app.state.headers = server_cfg.get("headers")
+    elif not server_config_type and server_cfg.get("url"):
+        sub_app.state.server_type = "sse"
+        sub_app.state.args = [server_cfg["url"]]
+        sub_app.state.headers = server_cfg.get("headers")
+
+    if api_key and strict_auth:
+        sub_app.add_middleware(APIKeyMiddleware, api_key=api_key)
+
+    sub_app.state.api_dependency = api_dependency
+    sub_app.state.connection_timeout = connection_timeout
+
+    return sub_app
+
+
+# ------- PATCH: TimeResponse -------
 class TimeResponse(BaseModel):
     now_utc: str
-# -------------------------------------------------------
+# ----------------------------------
 
 
 async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
@@ -97,7 +197,7 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                 outputSchema.get("$defs", {}),
             )
 
-        # SPECIAL-CASE: /time patch
+        # SPECIAL-CASE: /time endpoint
         if endpoint_name == "time":
             async def time_handler(
                 req: Request,
@@ -112,21 +212,26 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
 
                 result = await session.call_tool("time", arguments=body)
 
-                # Normalize everything to object form
+                # --- Robust normalizer ---
                 if isinstance(result, str):
                     return {"now_utc": result}
 
                 if isinstance(result, dict) and "now_utc" in result:
                     return result
 
-                # Handle MCP TextContent objects
                 if hasattr(result, "content") and result.content:
                     first = result.content[0]
-                    if hasattr(first, "text"):
+                    if hasattr(first, "text") and first.text:
                         return {"now_utc": first.text}
 
-                # Fallback
+                if isinstance(result, dict) and "content" in result and result["content"]:
+                    first = result["content"][0]
+                    if isinstance(first, dict) and "text" in first:
+                        return {"now_utc": first["text"]}
+
+                # Fallback: stringify
                 return {"now_utc": str(result)}
+                # ------------------------
 
             app.post(
                 f"/{endpoint_name}",
@@ -155,6 +260,8 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
         )(tool_handler)
 
 
-# All below (lifespan, run(), echo/ping routes) remain identical to v0.0.23 
-# ---------------------------------------------------------
-# ... [copy of lifespan(), run(), echo/ping unchanged] ...
+# ----------------------------------------------------------------
+# RESTORE unchanged from v0.0.23:
+#   lifespan(), run(), echo/ping routes
+# ----------------------------------------------------------------
+# (copy exactly, unchanged, as in v0.0.23 since they were working fine)
