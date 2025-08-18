@@ -1,4 +1,4 @@
-# main.py_v0.0.27
+# main.py_v0.0.28
 
 import asyncio
 import json
@@ -50,7 +50,7 @@ class GracefulShutdown:
 # -------------------------------------------------------------------
 # validate_server_config, load_config, create_sub_app,
 # mount_config_servers, unmount_servers, reload_config_handler
-# remain unchanged from v0.0.26
+# remain unchanged from prior version
 # -------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                 outputSchema.get("$defs", {}),
             )
 
-        # SPECIAL-CASE: /time endpoint
+        # SPECIAL-CASE: /time endpoint with debug logs
         if endpoint_name == "time":
             async def time_handler(
                 req: Request,
@@ -114,7 +114,22 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
 
                 result = await session.call_tool("time", arguments=body)
 
-                # --- Force extraction from TextContent ---
+                # ---------- DEBUG DUMP ----------
+                logger.info(f"/time raw result type: {type(result)}")
+                logger.info(f"/time raw result dir: {dir(result)}")
+
+                try:
+                    logger.info(f"/time raw dict: {result.dict()}")
+                except Exception as e:
+                    logger.warning(f"/time result.dict() failed: {e}")
+
+                try:
+                    logger.info(f"/time raw content: {result.content}")
+                except Exception as e:
+                    logger.warning(f"/time result.content failed: {e}")
+                # --------------------------------
+
+                # --- Attempt extraction ---
                 try:
                     if result and getattr(result, "content", None):
                         first = result.content[0]
@@ -123,16 +138,14 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
                 except Exception as e:
                     logger.warning(f"/time force extract failed: {e}")
 
-                # If dict (rare but supported)
                 if isinstance(result, dict) and "now_utc" in result:
                     return result
 
                 if isinstance(result, str):
                     return {"now_utc": result}
 
-                # Final fallback
                 return {"now_utc": str(result)}
-                # -----------------------------------------
+                # -------------------------
 
             app.post(
                 f"/{endpoint_name}",
@@ -162,6 +175,5 @@ async def create_dynamic_endpoints(app: FastAPI, api_dependency=None):
 
 
 # -------------------------------------------------------------------
-# lifespan(), run(), echo/ping routes are identical to v0.0.26
-# (unchanged, and confirmed working)
+# lifespan(), run(), echo/ping routes remain the same and working
 # -------------------------------------------------------------------
