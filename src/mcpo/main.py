@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.31
+Open WebUI MCPO - main.py v0.0.32
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -25,17 +25,30 @@ from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
-# MCP client imports (version-tolerant)
+# MCP client imports (robust against version differences)
 from mcp.client.session import ClientSession
-import mcp.client.streamable_http as streamable_http  # use module, then .connect(...)
+import mcp.client.streamable_http as mcp_streamable_http
 from mcp.shared.exceptions import McpError
+
+# Resolve connector function robustly (some versions export connect, others not)
+if hasattr(mcp_streamable_http, "connect"):
+    _CONNECTOR = mcp_streamable_http.connect
+    _CONNECTOR_NAME = "connect"
+elif hasattr(mcp_streamable_http, "connect_streamable_http"):
+    _CONNECTOR = mcp_streamable_http.connect_streamable_http  # fallback if present
+    _CONNECTOR_NAME = "connect_streamable_http"
+else:
+    raise ImportError(
+        f"Unsupported mcp.client.streamable_http API. Neither 'connect' nor "
+        f"'connect_streamable_http' found in {getattr(mcp_streamable_http, '__file__', '<unknown>')}."
+    )
 
 # -----------------------------------------------------------------------------
 # App Config
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.31"
+APP_VERSION = "0.0.32"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -110,7 +123,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
 
         tools_result = await rpc_with_skip_notifications(session.list_tools(), "tools/list")
         tools = tools_result.get("tools", [])
-        parsed = []
+        parsed: List[ToolDef] = []
         for t in tools:
             try:
                 parsed.append(
@@ -188,13 +201,15 @@ def create_app() -> FastAPI:
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
         logger.info(" Path Prefix: %s", PATH_PREFIX)
 
+        logger.info("MCP Streamable HTTP module: %s", getattr(mcp_streamable_http, "__file__", "<unknown>"))
+        logger.info("MCP connector in use: %s", _CONNECTOR_NAME)
         logger.info("Echo/Ping routes registered")
         logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
 
         try:
-            client_context = streamable_http.connect(MCP_SERVER_URL)
+            client_context = _CONNECTOR(MCP_SERVER_URL)
         except Exception as e:
-            logger.error("Failed to create MCP client context: %s", e)
+            logger.error("Failed to create MCP client context via %s: %s", _CONNECTOR_NAME, e)
             raise
 
         async def mount_tool_routes(tools: List[ToolDef]):
@@ -204,7 +219,7 @@ def create_app() -> FastAPI:
 
                 async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
-                        async with streamable_http.connect(MCP_SERVER_URL) as (reader, writer):
+                        async with _CONNECTOR(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
@@ -243,12 +258,20 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-if __name__ == "__main__":
+# -----------------------------------------------------------------------------
+# Backward-compatible entrypoint expected by container
+# -----------------------------------------------------------------------------
+
+def run():
+    """Backward-compat entrypoint: start uvicorn server."""
     import uvicorn
     uvicorn.run(
-        "main:app",
+        "mcpo.main:app",
         host="0.0.0.0",
         port=DEFAULT_PORT,
         log_level=os.getenv("UVICORN_LOG_LEVEL", "info"),
         reload=False,
     )
+
+if __name__ == "__main__":
+    run()
