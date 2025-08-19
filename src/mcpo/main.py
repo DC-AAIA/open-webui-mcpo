@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.32
+Open WebUI MCPO - main.py v0.0.33
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -25,30 +25,82 @@ from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
-# MCP client imports (robust against version differences)
+# -----------------------------------------------------------------------------
+# MCP client imports (robust across versions)
+# -----------------------------------------------------------------------------
+
 from mcp.client.session import ClientSession
-import mcp.client.streamable_http as mcp_streamable_http
+from importlib import import_module
 from mcp.shared.exceptions import McpError
 
-# Resolve connector function robustly (some versions export connect, others not)
-if hasattr(mcp_streamable_http, "connect"):
-    _CONNECTOR = mcp_streamable_http.connect
-    _CONNECTOR_NAME = "connect"
-elif hasattr(mcp_streamable_http, "connect_streamable_http"):
-    _CONNECTOR = mcp_streamable_http.connect_streamable_http  # fallback if present
-    _CONNECTOR_NAME = "connect_streamable_http"
-else:
+def resolve_http_connector():
+    """
+    Attempts to resolve a Streamable HTTP MCP connector across known API variants.
+    Returns: (connector_callable, connector_name, module_path, mcp_version_str)
+    Raises: ImportError with diagnostics if none matched.
+    """
+    mcp_version = None
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            mcp_version = version("mcp")
+        except PackageNotFoundError:
+            mcp_version = "unknown"
+    except Exception:
+        mcp_version = "unknown"
+
+    candidates = []
+
+    # 1) mcp.client.streamable_http.connect
+    try:
+        m = import_module("mcp.client.streamable_http")
+        if hasattr(m, "connect"):
+            return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
+        candidates.append(("mcp.client.streamable_http", list(sorted(dir(m)))))
+    except Exception as e:
+        candidates.append(("mcp.client.streamable_http (import error)", str(e)))
+
+    # 2) mcp.client.streamable_http.connect_streamable_http
+    try:
+        m = import_module("mcp.client.streamable_http")
+        if hasattr(m, "connect_streamable_http"):
+            return (m.connect_streamable_http, "streamable_http.connect_streamable_http", getattr(m, "__file__", "<unknown>"), mcp_version)
+    except Exception:
+        pass
+
+    # 3) mcp.client.http.streamable.connect
+    try:
+        m = import_module("mcp.client.http.streamable")
+        if hasattr(m, "connect"):
+            return (m.connect, "http.streamable.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
+        candidates.append(("mcp.client.http.streamable", list(sorted(dir(m)))))
+    except Exception as e:
+        candidates.append(("mcp.client.http.streamable (import error)", str(e)))
+
+    # 4) mcp.client.http.connect (generic)
+    try:
+        m = import_module("mcp.client.http")
+        if hasattr(m, "connect"):
+            return (m.connect, "http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
+        candidates.append(("mcp.client.http", list(sorted(dir(m)))))
+    except Exception as e:
+        candidates.append(("mcp.client.http (import error)", str(e)))
+
+    # Nothing matched → raise with diagnostics
+    details = "; ".join([f"{mod}: {info}" for mod, info in candidates])
     raise ImportError(
-        f"Unsupported mcp.client.streamable_http API. Neither 'connect' nor "
-        f"'connect_streamable_http' found in {getattr(mcp_streamable_http, '__file__', '<unknown>')}."
+        f"No compatible MCP HTTP connector found. Checked streamable_http and http variants. "
+        f"Installed mcp version: {mcp_version}. Candidates: {details}"
     )
+
+_CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
 
 # -----------------------------------------------------------------------------
 # App Config
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.32"
+APP_VERSION = "0.0.33"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -151,7 +203,7 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         content = result.get("content") or []
         if not content:
             return {}
-        text = content[0].get("text") if isinstance(content, dict) else None
+        text = content[0].get("text") if isinstance(content[0], dict) else None
         if not text:
             return {"content": content}
         try:
@@ -201,8 +253,10 @@ def create_app() -> FastAPI:
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
         logger.info(" Path Prefix: %s", PATH_PREFIX)
 
-        logger.info("MCP Streamable HTTP module: %s", getattr(mcp_streamable_http, "__file__", "<unknown>"))
-        logger.info("MCP connector in use: %s", _CONNECTOR_NAME)
+        # Prove which MCP lib we resolved and where it came from
+        logger.info("MCP package version: %s", _MCP_VERSION)
+        logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
+
         logger.info("Echo/Ping routes registered")
         logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
 
