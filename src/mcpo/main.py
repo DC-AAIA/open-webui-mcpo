@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.30
+Open WebUI MCPO - main.py v0.0.31
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -19,16 +19,15 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-import anyio
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
-# MCP client imports (as used in your existing project)
+# MCP client imports (version-tolerant)
 from mcp.client.session import ClientSession
-from mcp.client.streamable_http import connect as streamable_http_connect
+import mcp.client.streamable_http as streamable_http  # use module, then .connect(...)
 from mcp.shared.exceptions import McpError
 
 # -----------------------------------------------------------------------------
@@ -36,13 +35,12 @@ from mcp.shared.exceptions import McpError
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.30"
+APP_VERSION = "0.0.31"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 API_KEY = os.getenv("API_KEY", "changeme")
-# Single Streamable HTTP MCP server URL (from env)
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
 
 # -----------------------------------------------------------------------------
@@ -63,8 +61,6 @@ class APIKeyHeader(BaseModel):
     api_key: str
 
 def api_dependency():
-    # Simple header-based key check; adapt as needed for your deployment
-    # Expect clients (e.g., Open WebUI) to send "x-api-key" header
     from fastapi import Request
     async def _dep(request: Request) -> APIKeyHeader:
         key = request.headers.get("x-api-key")
@@ -92,15 +88,11 @@ async def rpc_with_skip_notifications(coro, desc: str):
     Runs an MCP RPC coroutine. If the streamable HTTP adapter surfaces a stray
     notification body (e.g., 'notifications/initialized') as the HTTP response
     and the MCP client raises a Pydantic validation error, skip once and retry.
-
-    This aligns with n8n-mcp expectations that initialize -> tools/list proceed,
-    while tolerating an occasional non-JSON-RPC response body in the transport.
     """
     try:
         return await coro
     except PydValidationError as e:
         txt = str(e)
-        # Heuristic match: the error MCPO logs shows 'notifications/initialized' and JSONRPCMessage model errors
         if "notifications/initialized" in txt or "JSONRPCMessage" in txt:
             logger.warning("rpc_with_skip_notifications: validation issue on %s; retrying once", desc)
             return await coro
@@ -111,16 +103,11 @@ async def rpc_with_skip_notifications(coro, desc: str):
 # -----------------------------------------------------------------------------
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
-    """
-    Initialize MCP session and list tools using Streamable HTTP transport.
-    """
     async with ClientSession(reader, writer) as session:
-        # initialize (resilient)
         init_result = await rpc_with_skip_notifications(session.initialize(), "initialize")
         proto = (init_result or {}).get("protocolVersion")
         logger.info("Negotiated protocol version: %s", proto)
 
-        # list_tools (resilient)
         tools_result = await rpc_with_skip_notifications(session.list_tools(), "tools/list")
         tools = tools_result.get("tools", [])
         parsed = []
@@ -139,21 +126,14 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         return parsed
 
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Calls tools/call on the MCP server and returns the result content as JSON.
-    """
     async with ClientSession(reader, writer) as session:
-        # We assume handshake already validated earlier; call directly here.
         try:
             resp = await session.call_tool(name=name, arguments=arguments)
         except McpError as me:
-            # Standard JSON-RPC error coming back from server
             raise HTTPException(status_code=400, detail={"mcp_error": me.message})
         except PydValidationError as e:
-            # Very unlikely here, but keep a helpful message if adapter surfaces issues
             raise HTTPException(status_code=502, detail={"validation_error": str(e)})
 
-        # Unified handling: MCPO expects { "content": [{ "type":"text", "text":"..." }], "isError": false }
         result = resp or {}
         content = result.get("content") or []
         if not content:
@@ -188,7 +168,6 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    # Simple health and ping
     @app.get(f"{PATH_PREFIX.rstrip('/')}/health" if PATH_PREFIX != "/" else "/health")
     async def health():
         return {"status": "ok", "name": APP_NAME, "version": APP_VERSION}
@@ -197,7 +176,6 @@ def create_app() -> FastAPI:
     async def ping():
         return {"pong": True}
 
-    # Lifespan: connect to MCP, fetch tool schemas, and mount routes
     @app.on_event("startup")
     async def on_startup():
         logger.info("Starting MCPO Server...")
@@ -213,26 +191,20 @@ def create_app() -> FastAPI:
         logger.info("Echo/Ping routes registered")
         logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
 
-        # Connect using Streamable HTTP transport
         try:
-            client_context = streamable_http_connect(MCP_SERVER_URL)
+            client_context = streamable_http.connect(MCP_SERVER_URL)
         except Exception as e:
             logger.error("Failed to create MCP client context: %s", e)
             raise
 
         async def mount_tool_routes(tools: List[ToolDef]):
-            """
-            For each tool, create a POST route under PATH_PREFIX.
-            Route name: /tools/{tool_name}
-            Body: JSON matching the tool's input schema
-            """
             for tool in tools:
                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                 logger.info("Registering route: %s", route_path)
 
                 async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
-                        async with streamable_http_connect(MCP_SERVER_URL) as (reader, writer):
+                        async with streamable_http.connect(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
@@ -256,7 +228,6 @@ def create_app() -> FastAPI:
             await setup_tools()
         except Exception as e:
             logger.error("Error during startup tool discovery/mount: %s", e)
-            # Do not crash the process; continue to serve health/ping and allow later retries if desired.
 
     @app.get("/")
     async def root():
