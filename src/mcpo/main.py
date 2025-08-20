@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35v (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35w (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -124,7 +124,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35v"
+APP_VERSION = "0.0.35w"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -310,12 +310,15 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
         # Initialize and safely read protocolVersion across 1.12.x dicts and 1.13.x models
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
+
         # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
+
         # Prevent AttributeError: only call .get when init_result is a dict
         proto = None
         if isinstance(init_result, dict):
             proto = init_result.get("protocolVersion")
+
         # Prefer safe_proto when available
         proto = safe_proto if safe_proto is not None else proto
 
@@ -340,7 +343,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         if not raw_tools and isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
 
-        # >>> INSERTED DEBUG SNIPPET STARTS HERE <<<
         # DEBUG: log a sample tool shape to finalize field mapping
         try:
             if raw_tools:
@@ -354,7 +356,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 )
         except Exception as _e:
             logger.info("Sample tool introspection failed: %s", _e)
-        # >>> INSERTED DEBUG SNIPPET ENDS HERE <<<
 
         parsed: List[ToolDef] = []
         for t in raw_tools:
@@ -363,11 +364,21 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 if isinstance(t, dict):
                     name = t.get("name")
                     description = t.get("description")
-                    input_schema = t.get("inputSchema") or t.get("input_schema") or t.get("parameters") or t.get("input")
-                    output_schema = t.get("outputSchema") or t.get("output_schema") or t.get("output")
+                    input_schema = (
+                        t.get("inputSchema")
+                        or t.get("input_schema")
+                        or t.get("parameters")
+                        or t.get("input")
+                    )
+                    output_schema = (
+                        t.get("outputSchema")
+                        or t.get("output_schema")
+                        or t.get("output")
+                    )
                 else:
                     name = getattr(t, "name", None)
                     description = getattr(t, "description", None)
+                    # Prefer camelCase seen in introspection; fall back to snake_case and alternates
                     input_schema = getattr(t, "inputSchema", None)
                     if input_schema is None:
                         input_schema = getattr(t, "input_schema", None)
@@ -393,7 +404,9 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 )
             except Exception as ex:
                 logger.warning("Skipping tool due to schema issue: %s; error: %s", t, ex)
+
         return parsed
+
 
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
