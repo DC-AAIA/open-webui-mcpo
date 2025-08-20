@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35m (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35n (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -60,17 +60,14 @@ def resolve_http_connector():
             return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
         if hasattr(m, "connect_streamable_http"):
             return (m.connect_streamable_http, "streamable_http.connect_streamable_http", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # 1.12.x-era helper used in v0.0.29 baseline
         if hasattr(m, "streamablehttp_client"):
             return (m.streamablehttp_client, "streamable_http.streamablehttp_client", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # Keep create_mcp_http_client as a later fallback
         if hasattr(m, "create_mcp_http_client"):
             return (m.create_mcp_http_client, "streamable_http.create_mcp_http_client", getattr(m, "__file__", "<unknown>"), mcp_version)
         candidates.append(("mcp.client.streamable_http", list(sorted(dir(m)))))
     except Exception as e:
         candidates.append(("mcp.client.streamable_http (import error)", str(e)))
 
-    # Alternate placements
     try:
         m = import_module("mcp.client.http.streamable")
         if hasattr(m, "connect"):
@@ -95,7 +92,6 @@ def resolve_http_connector():
 
 _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
 
-# Optional: probe alternate http connectors for fallback inside wrapper
 def _resolve_alt_http_connector():
     try:
         mod = import_module("mcp.client.http.streamable")
@@ -110,10 +106,8 @@ def _resolve_alt_http_connector():
     except Exception:
         pass
     return None
-
 _ALT_HTTP_CONNECT = _resolve_alt_http_connector()
 
-# For MCP 1.13.0, we may need StreamableHTTPTransport/types
 try:
     _streamable_http_mod = import_module("mcp.client.streamable_http")
     _StreamableHTTPTransport = getattr(_streamable_http_mod, "StreamableHTTPTransport", None)
@@ -124,27 +118,21 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# httpx for the 1.13.0 adapter branch
 try:
     import httpx
 except Exception:
     httpx = None
 
-# ----
-# App Config
-# ----
-
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35m"
+APP_VERSION = "0.0.35n"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
+MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 
-# Optional headers for MCP HTTP client (ensure sequence of (k, v) tuples if set)
-MCP_HEADERS = os.getenv("MCP_HEADERS", "")  # format: "Key1:Val1,Key2:Val2"
 def _parse_headers(hs: str):
     if not hs.strip():
         return None
@@ -161,19 +149,11 @@ def _parse_headers(hs: str):
             pairs.append((k, v))
     return pairs or None
 
-# ----
-# Logging
-# ----
-
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
-
-# ----
-# Security dependency
-# ----
 
 class APIKeyHeader(BaseModel):
     api_key: str
@@ -187,26 +167,13 @@ def api_dependency():
         return APIKeyHeader(api_key=key)
     return _dep
 
-# ----
-# Models mirroring MCP tool schemas
-# ----
-
 class ToolDef(BaseModel):
     name: str
     description: Optional[str] = None
     inputSchema: Dict[str, Any]
     outputSchema: Optional[Dict[str, Any]] = None
 
-# ----
-# Retry helper for transient MCP 1.12.x notification/validation noise
-# ----
-
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
-    """
-    Retry wrapper for JSON-RPC calls that sometimes fail due to transient
-    notification/validation noise in MCP 1.12.x.
-    call_fn must be a zero-arg function returning a new coroutine each attempt.
-    """
     for attempt in range(retries + 1):
         try:
             return await call_fn()
@@ -217,7 +184,6 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 "JSONRPCMessage" in txt or
                 "TaskGroup" in txt
             )
-            # Handle ExceptionGroup shape as well
             if not transient and hasattr(e, "exceptions"):
                 for sub in getattr(e, "exceptions", []):
                     s = str(sub)
@@ -230,19 +196,8 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 continue
             raise
 
-# ----
-# Connector wrapper (normalize to yield (reader, writer))
-# ----
-
 @asynccontextmanager
 async def _connector_wrapper(url: str):
-    """
-    Normalizes connectors to an async context that yields (reader, writer).
-    - If the resolved connector already yields a duplex (e.g., streamable_http.connect), just use it.
-    - If the connector is create_mcp_http_client, adapt with StreamableHTTPTransport, and if that fails,
-      fall back to alternate http connectors when present.
-    """
-    # Path 1: connectors that directly yield (reader, writer)
     if not _CONNECTOR_NAME.endswith("create_mcp_http_client"):
         async with _CONNECTOR(url) as ctx:
             if isinstance(ctx, tuple) and len(ctx) >= 2:
@@ -251,7 +206,6 @@ async def _connector_wrapper(url: str):
                 raise RuntimeError(f"Unexpected connector context result: {type(ctx)}")
         return
 
-    # Path 2: MCP 1.13.x create_mcp_http_client adapter
     if _StreamableHTTPTransport is None or httpx is None:
         raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
@@ -323,7 +277,6 @@ async def _connector_wrapper(url: str):
                 except Exception:
                     pass
 
-        # Fallback to alternate http connector if available
         if _ALT_HTTP_CONNECT is None:
             raise RuntimeError("StreamableHTTPTransport did not provide stream reader/writer and no alternate HTTP connector is available")
 
@@ -338,24 +291,43 @@ async def _connector_wrapper(url: str):
         except Exception:
             pass
 
-# ----
-# MCP client lifecycle and dynamic route generation
-# ----
+def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
+    if obj is None:
+        return None
+    if hasattr(obj, attr):
+        try:
+            return getattr(obj, attr)
+        except Exception:
+            pass
+    if isinstance(obj, dict):
+        try:
+            return obj.get(key)
+        except Exception:
+            pass
+    return None
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
+        safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
         proto = (init_result or {}).get("protocolVersion")
+        proto = safe_proto if safe_proto is not None else proto
         logger.info("Negotiated protocol version: %s", proto)
 
         tools_result = await retry_jsonrpc(lambda: session.list_tools(), "tools/list", retries=1)
 
-        # tools_result may be dict-like in 1.12.x
         raw_tools = []
         if isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
         elif hasattr(tools_result, "tools"):
             raw_tools = getattr(tools_result, "tools") or []
+        if not raw_tools and hasattr(tools_result, "tools"):
+            try:
+                raw_tools = getattr(tools_result, "tools") or []
+            except Exception:
+                raw_tools = []
+        if not raw_tools and isinstance(tools_result, dict):
+            raw_tools = tools_result.get("tools", [])
 
         parsed: List[ToolDef] = []
         for t in raw_tools:
@@ -393,10 +365,6 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             return json.loads(text)
         except Exception:
             return {"raw": text}
-
-# ----
-# FastAPI app and dynamic route creation
-# ----
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -461,7 +429,7 @@ def create_app() -> FastAPI:
                     try:
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                            return JSONResponse(status_code=200, content=result)
+                        return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
                         raise he
                     except Exception as e:
@@ -471,27 +439,25 @@ def create_app() -> FastAPI:
                 app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
         async def setup_tools():
-            # First attempt
             try:
                 async with client_context as (reader, writer):
                     tools = await list_mcp_tools(reader, writer)
-                    if not tools:
-                        logger.warning("No tools discovered from MCP server")
-                    else:
-                        logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                if not tools:
+                    logger.warning("No tools discovered from MCP server")
+                else:
+                    logger.info("Discovered %d tool(s) from MCP server", len(tools))
                     await mount_tool_routes(tools)
-                    return
+                return
             except Exception as e:
                 logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
                 await asyncio.sleep(0.1)
 
-            # Second attempt with a fresh connector
             async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
-                if not tools:
-                    logger.warning("No tools discovered from MCP server (after retry)")
-                else:
-                    logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
+            if not tools:
+                logger.warning("No tools discovered from MCP server (after retry)")
+            else:
+                logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
                 await mount_tool_routes(tools)
 
         try:
@@ -513,10 +479,6 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-# ----
-# Diagnostic helpers
-# ----
-
 def _collect_connector_diagnostics() -> Dict[str, Any]:
     info = {
         "mcp_version": _MCP_VERSION,
@@ -525,14 +487,12 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "alt_http_connect_available": bool(_ALT_HTTP_CONNECT is not None),
         "headers_configured": bool(MCP_HEADERS.strip()),
     }
-    # streamable_http module attrs
     try:
         _mod = import_module("mcp.client.streamable_http")
         info["streamable_http_module_file"] = getattr(_mod, "__file__", "<unknown>")
         info["streamable_http_attrs"] = sorted([a for a in dir(_mod) if not a.startswith("_")])[:100]
     except Exception as e:
         info["streamable_http_import_error"] = str(e)
-    # transport class introspection
     try:
         info["has_StreamableHTTPTransport"] = _StreamableHTTPTransport is not None
         if _StreamableHTTPTransport is not None:
@@ -551,10 +511,6 @@ def attach_mcpo_diagnostics(app: FastAPI) -> None:
         }
 
 attach_mcpo_diagnostics(app)
-
-# ----
-# Backward-compatible entrypoint expected by container (v0.0.29-compatible signature)
-# ----
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     import uvicorn
