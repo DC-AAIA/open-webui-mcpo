@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35p (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35q (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -124,7 +124,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35p"
+APP_VERSION = "0.0.35q"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -419,6 +419,13 @@ def create_app() -> FastAPI:
         logger.info(" Hostname: %s", hostname)
         logger.info(" Port: %s", DEFAULT_PORT)
         logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")
+      try:
+            _mask = "<unset>"
+            if API_KEY:
+                _mask = f"{API_KEY[:4]}...{API_KEY[-4:]}" if len(API_KEY) >= 8 else "<short>"
+            logger.info(" API Key fingerprint (masked): %s", _mask)
+        except Exception:
+            logger.info(" API Key fingerprint (masked): <error>")
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
         logger.info(" Path Prefix: %s", PATH_PREFIX)
 
