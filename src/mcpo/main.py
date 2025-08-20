@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35t (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35u (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -129,7 +129,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35t"
+APP_VERSION = "0.0.35u"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -362,11 +362,22 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         parsed: List[ToolDef] = []
         for t in raw_tools:
             try:
-                # Support both dict-like (1.12.x) and model/attrs (1.12.x/1.13.x)
-                name = t.get("name") if isinstance(t, dict) else getattr(t, "name", None)
-                description = t.get("description") if isinstance(t, dict) else getattr(t, "description", None)
-                input_schema = t.get("inputSchema") if isinstance(t, dict) else getattr(t, "inputSchema", None)
-                output_schema = t.get("outputSchema") if isinstance(t, dict) else getattr(t, "outputSchema", None)
+                # Support dict-like and model objects across MCP versions, snake_case and camelCase
+                if isinstance(t, dict):
+                    name = t.get("name")
+                    description = t.get("description")
+                    input_schema = t.get("inputSchema") or t.get("input_schema")
+                    output_schema = t.get("outputSchema") or t.get("output_schema")
+                else:
+                    name = getattr(t, "name", None)
+                    description = getattr(t, "description", None)
+                    # Try camelCase then snake_case
+                    input_schema = getattr(t, "inputSchema", None)
+                    if input_schema is None:
+                        input_schema = getattr(t, "input_schema", None)
+                    output_schema = getattr(t, "outputSchema", None)
+                    if output_schema is None:
+                        output_schema = getattr(t, "output_schema", None)
 
                 if not name or input_schema is None:
                     raise ValueError("Tool missing required fields (name/inputSchema)")
