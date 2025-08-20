@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35o (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35p (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -124,7 +124,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35o"
+APP_VERSION = "0.0.35p"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -313,7 +313,13 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
 
         # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
-        proto = (init_result or {}).get("protocolVersion")
+
+        # Prevent AttributeError: only call .get when init_result is a dict
+        proto = None
+        if isinstance(init_result, dict):
+            proto = init_result.get("protocolVersion")
+
+        # Prefer safe_proto when available
         proto = safe_proto if safe_proto is not None else proto
 
         logger.info("Negotiated protocol version: %s", proto)
