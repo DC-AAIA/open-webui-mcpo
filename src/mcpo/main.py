@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35k (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35l (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -59,6 +59,9 @@ def resolve_http_connector():
             return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
         if hasattr(m, "connect_streamable_http"):
             return (m.connect_streamable_http, "streamable_http.connect_streamable_http", getattr(m, "__file__", "<unknown>"), mcp_version)
+        # 1.12.x-era helper used in v0.0.29 baseline
+        if hasattr(m, "streamablehttp_client"):
+            return (m.streamablehttp_client, "streamable_http.streamablehttp_client", getattr(m, "__file__", "<unknown>"), mcp_version)
         # Keep create_mcp_http_client as a later fallback
         if hasattr(m, "create_mcp_http_client"):
             return (m.create_mcp_http_client, "streamable_http.create_mcp_http_client", getattr(m, "__file__", "<unknown>"), mcp_version)
