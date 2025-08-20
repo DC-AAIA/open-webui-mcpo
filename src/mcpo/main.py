@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35b (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35c (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -26,9 +26,9 @@ from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
-# -----------------------------------------------------------------------------
+# ----
 # MCP client imports (robust across versions)
-# -----------------------------------------------------------------------------
+# ----
 
 from mcp.client.session import ClientSession
 from importlib import import_module
@@ -105,9 +105,15 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# -----------------------------------------------------------------------------
+# v0.0.35c ADD: We will need httpx only for the 1.13.0 adapter branch
+try:
+    import httpx  # v0.0.35c ADD
+except Exception:
+    httpx = None  # v0.0.35c ADD
+
+# ----
 # App Config
-# -----------------------------------------------------------------------------
+# ----
 
 APP_NAME = "Open WebUI MCPO"
 APP_VERSION = "0.0.35b"
@@ -136,9 +142,9 @@ def _parse_headers(hs: str):
             pairs.append((k, v))
     return pairs or None
 
-# -----------------------------------------------------------------------------
+# ----
 # Logging
-# -----------------------------------------------------------------------------
+# ----
 
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
@@ -146,9 +152,9 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-# -----------------------------------------------------------------------------
+# ----
 # Security dependency
-# -----------------------------------------------------------------------------
+# ----
 
 class APIKeyHeader(BaseModel):
     api_key: str
@@ -162,9 +168,9 @@ def api_dependency():
         return APIKeyHeader(api_key=key)
     return _dep
 
-# -----------------------------------------------------------------------------
+# ----
 # Models mirroring MCP tool schemas
-# -----------------------------------------------------------------------------
+# ----
 
 class ToolDef(BaseModel):
     name: str
@@ -172,9 +178,9 @@ class ToolDef(BaseModel):
     inputSchema: Dict[str, Any]
     outputSchema: Optional[Dict[str, Any]] = None
 
-# -----------------------------------------------------------------------------
+# ----
 # Resilience helper: skip stray notification envelopes and retry once
-# -----------------------------------------------------------------------------
+# ----
 
 async def rpc_with_skip_notifications(coro, desc: str):
     """
@@ -191,9 +197,9 @@ async def rpc_with_skip_notifications(coro, desc: str):
             return await coro
         raise
 
-# -----------------------------------------------------------------------------
+# ----
 # Connector wrapper for MCP 1.13.0 (normalize to yield (reader, writer))
-# -----------------------------------------------------------------------------
+# ----
 
 @asynccontextmanager
 async def _connector_wrapper(url: str):
@@ -205,13 +211,13 @@ async def _connector_wrapper(url: str):
     if _CONNECTOR_NAME.endswith("create_mcp_http_client"):
         if _StreamableHTTPTransport is None:
             raise RuntimeError("StreamableHTTPTransport not available in mcp.client.streamable_http")
-        # Prepare httpx.AsyncClient via the MCP factory; pass headers in correct shape
+        if httpx is None:
+            raise RuntimeError("httpx is required for MCP 1.13.0 transport adapter")
+
+        # v0.0.35c ADD: construct httpx.AsyncClient directly with base_url + headers
         headers = _parse_headers(MCP_HEADERS) or []
-        # Build kwargs for the factory; many MCP variants accept 'base_url' and 'headers'
-        create_kwargs = {"base_url": url}
-        if headers:
-            create_kwargs["headers"] = headers
-        client = _CONNECTOR(**create_kwargs)  # returns httpx.AsyncClient
+        client = httpx.AsyncClient(base_url=url, headers=headers)  # v0.0.35c ADD
+
         transport = _StreamableHTTPTransport(client)  # create transport around client
         # The transport acts as an async context manager exposing .reader/.writer
         try:
@@ -231,9 +237,9 @@ async def _connector_wrapper(url: str):
             else:
                 raise RuntimeError(f"Unexpected connector context result: {type(ctx)}")
 
-# -----------------------------------------------------------------------------
+# ----
 # MCP client lifecycle and dynamic route generation
-# -----------------------------------------------------------------------------
+# ----
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
@@ -279,9 +285,9 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         except Exception:
             return {"raw": text}
 
-# -----------------------------------------------------------------------------
+# ----
 # FastAPI app and dynamic route creation
-# -----------------------------------------------------------------------------
+# ----
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -343,7 +349,7 @@ def create_app() -> FastAPI:
                     try:
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                        return JSONResponse(status_code=200, content=result)
+                            return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
                         raise he
                     except Exception as e:
@@ -380,9 +386,9 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-# -----------------------------------------------------------------------------
+# ----
 # Backward-compatible entrypoint expected by container (v0.0.29-compatible signature)
-# -----------------------------------------------------------------------------
+# ----
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     """
