@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35c (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35d (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -105,18 +105,18 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# v0.0.35c ADD: We will need httpx only for the 1.13.0 adapter branch
+# v0.0.35d: httpx needed for the 1.13.0 adapter branch
 try:
-    import httpx  # v0.0.35c ADD
+    import httpx
 except Exception:
-    httpx = None  # v0.0.35c ADD
+    httpx = None
 
 # ----
 # App Config
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35b"
+APP_VERSION = "0.0.35d"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -214,20 +214,28 @@ async def _connector_wrapper(url: str):
         if httpx is None:
             raise RuntimeError("httpx is required for MCP 1.13.0 transport adapter")
 
-        # v0.0.35c ADD: construct httpx.AsyncClient directly with base_url + headers
+        # Build an httpx.AsyncClient using base_url + headers (no call to create_mcp_http_client here)
         headers = _parse_headers(MCP_HEADERS) or []
-        client = httpx.AsyncClient(base_url=url, headers=headers)  # v0.0.35c ADD
+        client = httpx.AsyncClient(base_url=url, headers=headers)
 
-        transport = _StreamableHTTPTransport(client)  # create transport around client
-        # The transport acts as an async context manager exposing .reader/.writer
+        transport = _StreamableHTTPTransport(client)
+
+        # v0.0.35d: transport is not an async CM yielding a tuple; enter explicitly and read attrs
+        await transport.__aenter__()
         try:
-            async with transport as (reader, writer):
-                yield reader, writer
+            reader = getattr(transport, "reader", None)
+            writer = getattr(transport, "writer", None)
+            if reader is None or writer is None:
+                raise RuntimeError("StreamableHTTPTransport did not expose reader/writer")
+            yield reader, writer
         finally:
             try:
-                await client.aclose()
-            except Exception:
-                pass
+                await transport.__aexit__(None, None, None)
+            finally:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
     else:
         # Legacy or alternative connectors already yield (reader, writer) or (reader, writer, ...)
         async with _CONNECTOR(url) as ctx:
