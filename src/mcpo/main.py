@@ -378,23 +378,28 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         parsed: List[ToolDef] = []
         for t in raw_tools:
             try:
-                # Support dict-like and model objects across MCP versions, snake_case and camelCase
+                # Support dict-like and model objects across MCP versions
                 if isinstance(t, dict):
                     name = t.get("name")
                     description = t.get("description")
-                    input_schema = t.get("inputSchema") or t.get("input_schema")
-                    output_schema = t.get("outputSchema") or t.get("output_schema")
+                    input_schema = t.get("inputSchema") or t.get("input_schema") or t.get("parameters") or t.get("input")
+                    output_schema = t.get("outputSchema") or t.get("output_schema") or t.get("output")
                 else:
                     name = getattr(t, "name", None)
                     description = getattr(t, "description", None)
-                    # Try camelCase then snake_case
+                    # Prefer camelCase seen in introspection; fall back to snake_case and alternates
                     input_schema = getattr(t, "inputSchema", None)
                     if input_schema is None:
                         input_schema = getattr(t, "input_schema", None)
+                    if input_schema is None:
+                        input_schema = getattr(t, "parameters", None) or getattr(t, "input", None)
                     output_schema = getattr(t, "outputSchema", None)
                     if output_schema is None:
                         output_schema = getattr(t, "output_schema", None)
+                    if output_schema is None:
+                        output_schema = getattr(t, "output", None)
 
+                # Require only name and input schema; output schema is optional
                 if not name or input_schema is None:
                     raise ValueError("Tool missing required fields (name/inputSchema)")
 
@@ -403,7 +408,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                         name=name,
                         description=description,
                         inputSchema=input_schema,
-                        outputSchema=output_schema,
+                        outputSchema=output_schema,  # may be None
                     )
                 )
             except Exception as ex:
