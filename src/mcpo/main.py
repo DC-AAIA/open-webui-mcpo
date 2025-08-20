@@ -381,6 +381,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 )
             except Exception as ex:
                 logger.warning("Skipping tool due to schema issue: %s; error: %s", t, ex)
+              
 
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
