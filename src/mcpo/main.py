@@ -35,7 +35,6 @@ from starlette.responses import JSONResponse
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
 
-
 def resolve_http_connector():
     """
     Resolve a Streamable HTTP MCP connector across known API variants.
@@ -54,7 +53,6 @@ def resolve_http_connector():
 
     candidates = []
 
-    # Prefer a connector that directly yields (reader, writer)
     try:
         m = import_module("mcp.client.streamable_http")
         if hasattr(m, "connect"):
@@ -91,9 +89,7 @@ def resolve_http_connector():
         f"Installed mcp version: {mcp_version}. Candidates: {details}"
     )
 
-
 _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
-
 
 def _resolve_alt_http_connector():
     try:
@@ -109,7 +105,6 @@ def _resolve_alt_http_connector():
     except Exception:
         pass
     return None
-
 
 _ALT_HTTP_CONNECT = _resolve_alt_http_connector()
 
@@ -138,7 +133,6 @@ API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
 MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 
-
 def _parse_headers(hs: str):
     if not hs.strip():
         return None
@@ -155,36 +149,29 @@ def _parse_headers(hs: str):
             pairs.append((k, v))
     return pairs or None
 
-
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-
 class APIKeyHeader(BaseModel):
     api_key: str
 
-
 def api_dependency():
     from fastapi import Request
-
     async def _dep(request: Request) -> APIKeyHeader:
         key = request.headers.get("x-api-key")
         if not key or key != API_KEY:
             raise HTTPException(status_code=401, detail="Unauthorized")
         return APIKeyHeader(api_key=key)
-
     return _dep
-
 
 class ToolDef(BaseModel):
     name: str
     description: Optional[str] = None
     inputSchema: Dict[str, Any]
     outputSchema: Optional[Dict[str, Any]] = None
-
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -208,7 +195,6 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 await asyncio.sleep(sleep_s)
                 continue
             raise
-
 
 @asynccontextmanager
 async def _connector_wrapper(url: str):
@@ -305,7 +291,6 @@ async def _connector_wrapper(url: str):
         except Exception:
             pass
 
-
 def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
     if obj is None:
         return None
@@ -321,20 +306,16 @@ def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
             pass
     return None
 
-
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
         # Initialize and safely read protocolVersion across 1.12.x dicts and 1.13.x models
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
-
         # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
-
         # Prevent AttributeError: only call .get when init_result is a dict
         proto = None
         if isinstance(init_result, dict):
             proto = init_result.get("protocolVersion")
-
         # Prefer safe_proto when available
         proto = safe_proto if safe_proto is not None else proto
 
@@ -387,7 +368,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 else:
                     name = getattr(t, "name", None)
                     description = getattr(t, "description", None)
-                    # Prefer camelCase seen in introspection; fall back to snake_case and alternates
                     input_schema = getattr(t, "inputSchema", None)
                     if input_schema is None:
                         input_schema = getattr(t, "input_schema", None)
@@ -413,7 +393,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 )
             except Exception as ex:
                 logger.warning("Skipping tool due to schema issue: %s; error: %s", t, ex)
-              
+        return parsed
 
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
@@ -436,7 +416,6 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             return json.loads(text)
         except Exception:
             return {"raw": text}
-
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -556,9 +535,7 @@ def create_app() -> FastAPI:
 
     return app
 
-
 app = create_app()
-
 
 def _collect_connector_diagnostics() -> Dict[str, Any]:
     info = {
@@ -582,7 +559,6 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         pass
     return info
 
-
 def attach_mcpo_diagnostics(app: FastAPI) -> None:
     route = f"{PATH_PREFIX.rstrip('/')}/_diagnostic" if PATH_PREFIX != "/" else "/_diagnostic"
 
@@ -593,9 +569,7 @@ def attach_mcpo_diagnostics(app: FastAPI) -> None:
             "mcp": _collect_connector_diagnostics(),
         }
 
-
 attach_mcpo_diagnostics(app)
-
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     import uvicorn
@@ -606,7 +580,6 @@ def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, 
         log_level=log_level or os.getenv("UVICORN_LOG_LEVEL", "info"),
         reload=reload,
     )
-
 
 if __name__ == "__main__":
     run()
