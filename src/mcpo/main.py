@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35w (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35y (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -28,19 +28,10 @@ from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
-# ----
-# MCP client imports (robust across versions)
-# ----
-
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
 
 def resolve_http_connector():
-    """
-    Resolve a Streamable HTTP MCP connector across known API variants.
-    Returns: (connector_callable, connector_name, module_path, mcp_version_str)
-    Raises: ImportError with diagnostics if none matched.
-    """
     mcp_version = None
     try:
         from importlib.metadata import version, PackageNotFoundError
@@ -124,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35w"
+APP_VERSION = "0.0.35y"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -191,7 +182,7 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                         transient = True
                         break
             if attempt < retries and transient:
-                logging.getLogger("mcpo").warning("Transient error on %s; retrying (%d/%d)", desc, attempt + 1, retries)
+                logger.warning("Transient error on %s; retrying (%d/%d)", desc, attempt + 1, retries)
                 await asyncio.sleep(sleep_s)
                 continue
             raise
@@ -210,13 +201,19 @@ async def _connector_wrapper(url: str):
         raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
     headers = _parse_headers(MCP_HEADERS) or []
+    if headers:
+        try:
+            header_keys = [k for (k, _v) in headers]
+            logger.info("MCP_HEADERS configured with keys: %s", header_keys)
+        except Exception:
+            logger.info("MCP_HEADERS present but keys could not be listed safely")
+
     client = httpx.AsyncClient(base_url=url, headers=headers)
     transport = _StreamableHTTPTransport(client)
 
     def _extract_duplex(t):
         reader = getattr(t, "reader", None)
         writer = getattr(t, "writer", None)
-
         if reader is None and hasattr(t, "stream_reader"):
             reader = getattr(t, "stream_reader")
         if writer is None and hasattr(t, "stream_writer"):
@@ -303,23 +300,17 @@ def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
-        # Initialize and safely read protocolVersion across 1.12.x dicts and 1.13.x models
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
-        # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
-        # Prevent AttributeError: only call .get when init_result is a dict
         proto = None
         if isinstance(init_result, dict):
             proto = init_result.get("protocolVersion")
-        # Prefer safe_proto when available
         proto = safe_proto if safe_proto is not None else proto
 
         logger.info("Negotiated protocol version: %s", proto)
 
-        # List tools with retry to absorb transient notification/validation noise
         tools_result = await retry_jsonrpc(lambda: session.list_tools(), "tools/list", retries=1)
 
-        # tools_result may be dict-like in 1.12.x or a model with .tools in 1.13.x
         raw_tools: List[Dict[str, Any]] = []
         if isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
@@ -350,7 +341,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         parsed: List[ToolDef] = []
         for t in raw_tools:
             try:
-                # Support dict-like and model objects across MCP versions
                 if isinstance(t, dict):
                     name = t.get("name")
                     description = t.get("description")
@@ -368,7 +358,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 else:
                     name = getattr(t, "name", None)
                     description = getattr(t, "description", None)
-                    # Prefer camelCase seen in introspection; fall back to snake_case and alternates
                     input_schema = getattr(t, "inputSchema", None)
                     if input_schema is None:
                         input_schema = getattr(t, "input_schema", None)
@@ -380,7 +369,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                     if output_schema is None:
                         output_schema = getattr(t, "output", None)
 
-                # Require only name and input schema; output schema is optional
                 if not name or input_schema is None:
                     raise ValueError("Tool missing required fields (name/inputSchema)")
 
@@ -389,7 +377,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                         name=name,
                         description=description,
                         inputSchema=input_schema,
-                        outputSchema=output_schema,  # may be None
+                        outputSchema=output_schema,
                     )
                 )
             except Exception as ex:
@@ -418,6 +406,8 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             return json.loads(text)
         except Exception:
             return {"raw": text}
+
+_DISCOVERED_TOOL_NAMES: List[str] = []
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -452,7 +442,7 @@ def create_app() -> FastAPI:
         logger.info(" Version: %s", APP_VERSION)
         logger.info(" Description: %s", APP_DESCRIPTION)
         try:
-            hostname = os.uname().nodename  # type: ignore[attr-defined]
+            hostname = os.uname().nodename
         except Exception:
             hostname = "unknown"
         logger.info(" Hostname: %s", hostname)
@@ -506,8 +496,10 @@ def create_app() -> FastAPI:
                         logger.warning("No tools discovered from MCP server")
                     else:
                         logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                        _DISCOVERED_TOOL_NAMES.clear()
+                        _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
                         await mount_tool_routes(tools)
-                    return
+                return
             except Exception as e:
                 logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
                 await asyncio.sleep(0.1)
@@ -518,6 +510,8 @@ def create_app() -> FastAPI:
                     logger.warning("No tools discovered from MCP server (after retry)")
                 else:
                     logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
+                    _DISCOVERED_TOOL_NAMES.clear()
+                    _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
                     await mount_tool_routes(tools)
 
         try:
@@ -571,6 +565,14 @@ def attach_mcpo_diagnostics(app: FastAPI) -> None:
         }
 
 attach_mcpo_diagnostics(app)
+
+def attach_tools_listing(app: FastAPI) -> None:
+    route = f"{PATH_PREFIX.rstrip('/')}/_tools" if PATH_PREFIX != "/" else "/_tools"
+    @app.get(route)
+    async def _tools(dep=Depends(api_dependency())):
+        return {"tools": list(_DISCOVERED_TOOL_NAMES)}
+
+attach_tools_listing(app)
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     import uvicorn
