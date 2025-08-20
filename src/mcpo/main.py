@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35u (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35v (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -129,7 +129,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35u"
+APP_VERSION = "0.0.35v"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -358,6 +358,22 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 raw_tools = []
         if not raw_tools and isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
+
+        # >>> INSERTED DEBUG SNIPPET STARTS HERE <<<
+        # DEBUG: log a sample tool shape to finalize field mapping
+        try:
+            if raw_tools:
+                sample = raw_tools[0]
+                tname = getattr(sample, "name", None) if not isinstance(sample, dict) else sample.get("name")
+                logger.info(
+                    "Sample tool introspection: type=%s name=%s attrs=%s",
+                    type(sample).__name__,
+                    tname,
+                    [a for a in dir(sample) if not a.startswith("_")][:20] if not isinstance(sample, dict) else list(sample.keys()),
+                )
+        except Exception as _e:
+            logger.info("Sample tool introspection failed: %s", _e)
+        # >>> INSERTED DEBUG SNIPPET ENDS HERE <<<
 
         parsed: List[ToolDef] = []
         for t in raw_tools:
