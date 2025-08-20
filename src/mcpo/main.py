@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35g (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35h (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -55,13 +55,10 @@ def resolve_http_connector():
     # 1) mcp.client.streamable_http.* (primary module)
     try:
         m = import_module("mcp.client.streamable_http")
-        # 1a) Oldest variants
         if hasattr(m, "connect"):
             return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # 1b) MCP 1.13.0+ new factory (returns httpx.AsyncClient)
         if hasattr(m, "create_mcp_http_client"):
             return (m.create_mcp_http_client, "streamable_http.create_mcp_http_client", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # 1c) Some intermediate variants
         if hasattr(m, "connect_streamable_http"):
             return (m.connect_streamable_http, "streamable_http.connect_streamable_http", getattr(m, "__file__", "<unknown>"), mcp_version)
         candidates.append(("mcp.client.streamable_http", list(sorted(dir(m)))))
@@ -105,7 +102,7 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# v0.0.35g: httpx needed for the 1.13.0 adapter branch
+# v0.0.35h: httpx needed for the 1.13.0 adapter branch
 try:
     import httpx
 except Exception:
@@ -116,7 +113,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35g"
+APP_VERSION = "0.0.35h"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -214,23 +211,23 @@ async def _connector_wrapper(url: str):
         if httpx is None:
             raise RuntimeError("httpx is required for MCP 1.13.0 transport adapter")
 
-        # Build an httpx.AsyncClient using base_url + headers
         headers = _parse_headers(MCP_HEADERS) or []
         client = httpx.AsyncClient(base_url=url, headers=headers)
-
         transport = _StreamableHTTPTransport(client)
 
-        # Probe common attribute names for the duplex stream; be robust across MCP variants.
+        # Robust probing across MCP 1.13.x variants
         try:
+            # Canonical
             reader = getattr(transport, "reader", None)
             writer = getattr(transport, "writer", None)
 
+            # stream_* fallbacks
             if reader is None and hasattr(transport, "stream_reader"):
                 reader = getattr(transport, "stream_reader")
             if writer is None and hasattr(transport, "stream_writer"):
                 writer = getattr(transport, "stream_writer")
 
-            # Some builds expose a duplex object with .reader/.writer
+            # duplex attribute with .reader/.writer
             if (reader is None or writer is None) and hasattr(transport, "duplex"):
                 duplex = getattr(transport, "duplex")
                 if duplex is not None:
@@ -239,7 +236,28 @@ async def _connector_wrapper(url: str):
                     if writer is None and hasattr(duplex, "writer"):
                         writer = getattr(duplex, "writer")
 
-            # Some variants offer a method returning both ends
+            # nested transport.reader/writer (seen in some builds)
+            if (reader is None or writer is None) and hasattr(transport, "transport"):
+                inner = getattr(transport, "transport")
+                if inner is not None:
+                    if reader is None and hasattr(inner, "reader"):
+                        reader = getattr(inner, "reader")
+                    if writer is None and hasattr(inner, "writer"):
+                        writer = getattr(inner, "writer")
+
+            # duplex() callable returning an object with .reader/.writer
+            if (reader is None or writer is None) and hasattr(transport, "duplex") and callable(getattr(transport, "duplex")):
+                try:
+                    d = transport.duplex()
+                    if d is not None:
+                        if reader is None and hasattr(d, "reader"):
+                            reader = getattr(d, "reader")
+                        if writer is None and hasattr(d, "writer"):
+                            writer = getattr(d, "writer")
+                except Exception:
+                    pass
+
+            # get_stream() tuple
             if (reader is None or writer is None) and hasattr(transport, "get_stream"):
                 try:
                     pair = transport.get_stream()
@@ -249,7 +267,7 @@ async def _connector_wrapper(url: str):
                 except Exception:
                     pass
 
-            # Last resort: callables reader()/writer()
+            # callables reader()/writer()
             if reader is None and hasattr(transport, "reader") and callable(getattr(transport, "reader")):
                 try:
                     reader = transport.reader()
@@ -271,7 +289,6 @@ async def _connector_wrapper(url: str):
             except Exception:
                 pass
     else:
-        # Legacy or alternative connectors already yield (reader, writer) or (reader, writer, ...)
         async with _CONNECTOR(url) as ctx:
             if isinstance(ctx, tuple) and len(ctx) >= 2:
                 yield ctx[0], ctx[1]
@@ -368,7 +385,6 @@ def create_app() -> FastAPI:
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
         logger.info(" Path Prefix: %s", PATH_PREFIX)
 
-        # Prove which MCP lib we resolved and where it came from
         logger.info("MCP package version: %s", _MCP_VERSION)
         logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
 
