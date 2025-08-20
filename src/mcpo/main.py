@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35e (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35f (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -105,7 +105,7 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# v0.0.35d: httpx needed for the 1.13.0 adapter branch
+# v0.0.35f: httpx needed for the 1.13.0 adapter branch
 try:
     import httpx
 except Exception:
@@ -116,7 +116,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35e"
+APP_VERSION = "0.0.35f"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -220,13 +220,32 @@ async def _connector_wrapper(url: str):
 
         transport = _StreamableHTTPTransport(client)
 
-        # Adjusted for MCP 1.13.0: transport is not an async context manager and has no __aenter__/__aexit__.
-        # Access reader/writer directly, and ensure client is closed on exit.
+        # Adjusted for MCP 1.13.0: transport is not an async context manager.
+        # Probe common attribute names for the duplex stream.
         try:
+            # Try canonical names first
             reader = getattr(transport, "reader", None)
             writer = getattr(transport, "writer", None)
+
+            # Fallbacks commonly seen in recent MCP builds
+            if reader is None and hasattr(transport, "stream_reader"):
+                reader = getattr(transport, "stream_reader")
+            if writer is None and hasattr(transport, "stream_writer"):
+                writer = getattr(transport, "stream_writer")
+
+            # Some variants offer a method returning both ends
+            if (reader is None or writer is None) and hasattr(transport, "get_stream"):
+                try:
+                    pair = transport.get_stream()
+                    if isinstance(pair, tuple) and len(pair) >= 2:
+                        reader = reader or pair[0]
+                        writer = writer or pair[1]
+                except Exception:
+                    pass
+
             if reader is None or writer is None:
-                raise RuntimeError("StreamableHTTPTransport did not expose reader/writer")
+                raise RuntimeError("StreamableHTTPTransport did not provide stream reader/writer")
+
             yield reader, writer
         finally:
             try:
