@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35q (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35s (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -20,6 +20,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
+from importlib import import_module
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,8 +33,8 @@ from starlette.responses import JSONResponse
 # ----
 
 from mcp.client.session import ClientSession
-from importlib import import_module
 from mcp.shared.exceptions import McpError
+
 
 def resolve_http_connector():
     """
@@ -90,7 +91,9 @@ def resolve_http_connector():
         f"Installed mcp version: {mcp_version}. Candidates: {details}"
     )
 
+
 _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
+
 
 def _resolve_alt_http_connector():
     try:
@@ -106,6 +109,8 @@ def _resolve_alt_http_connector():
     except Exception:
         pass
     return None
+
+
 _ALT_HTTP_CONNECT = _resolve_alt_http_connector()
 
 try:
@@ -124,7 +129,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35q"
+APP_VERSION = "0.0.35s"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -132,6 +137,7 @@ CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "")
 API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
 MCP_HEADERS = os.getenv("MCP_HEADERS", "")
+
 
 def _parse_headers(hs: str):
     if not hs.strip():
@@ -149,29 +155,36 @@ def _parse_headers(hs: str):
             pairs.append((k, v))
     return pairs or None
 
+
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+
 class APIKeyHeader(BaseModel):
     api_key: str
 
+
 def api_dependency():
     from fastapi import Request
+
     async def _dep(request: Request) -> APIKeyHeader:
         key = request.headers.get("x-api-key")
         if not key or key != API_KEY:
             raise HTTPException(status_code=401, detail="Unauthorized")
         return APIKeyHeader(api_key=key)
+
     return _dep
+
 
 class ToolDef(BaseModel):
     name: str
     description: Optional[str] = None
     inputSchema: Dict[str, Any]
     outputSchema: Optional[Dict[str, Any]] = None
+
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -195,6 +208,7 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 await asyncio.sleep(sleep_s)
                 continue
             raise
+
 
 @asynccontextmanager
 async def _connector_wrapper(url: str):
@@ -291,6 +305,7 @@ async def _connector_wrapper(url: str):
         except Exception:
             pass
 
+
 def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
     if obj is None:
         return None
@@ -305,6 +320,7 @@ def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
         except Exception:
             pass
     return None
+
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
@@ -358,6 +374,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 logger.warning("Skipping tool due to schema issue: %s; error: %s", t, ex)
         return parsed
 
+
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
         try:
@@ -379,6 +396,7 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             return json.loads(text)
         except Exception:
             return {"raw": text}
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -419,7 +437,7 @@ def create_app() -> FastAPI:
         logger.info(" Hostname: %s", hostname)
         logger.info(" Port: %s", DEFAULT_PORT)
         logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")
-      try:
+        try:
             _mask = "<unset>"
             if API_KEY:
                 _mask = f"{API_KEY[:4]}...{API_KEY[-4:]}" if len(API_KEY) >= 8 else "<short>"
@@ -450,7 +468,7 @@ def create_app() -> FastAPI:
                     try:
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                        return JSONResponse(status_code=200, content=result)
+                            return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
                         raise he
                     except Exception as e:
@@ -463,23 +481,23 @@ def create_app() -> FastAPI:
             try:
                 async with client_context as (reader, writer):
                     tools = await list_mcp_tools(reader, writer)
-                if not tools:
-                    logger.warning("No tools discovered from MCP server")
-                else:
-                    logger.info("Discovered %d tool(s) from MCP server", len(tools))
-                    await mount_tool_routes(tools)
-                return
+                    if not tools:
+                        logger.warning("No tools discovered from MCP server")
+                    else:
+                        logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                        await mount_tool_routes(tools)
+                    return
             except Exception as e:
                 logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
                 await asyncio.sleep(0.1)
 
             async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
-            if not tools:
-                logger.warning("No tools discovered from MCP server (after retry)")
-            else:
-                logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
-                await mount_tool_routes(tools)
+                if not tools:
+                    logger.warning("No tools discovered from MCP server (after retry)")
+                else:
+                    logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
+                    await mount_tool_routes(tools)
 
         try:
             await setup_tools()
@@ -498,7 +516,9 @@ def create_app() -> FastAPI:
 
     return app
 
+
 app = create_app()
+
 
 def _collect_connector_diagnostics() -> Dict[str, Any]:
     info = {
@@ -522,8 +542,10 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         pass
     return info
 
+
 def attach_mcpo_diagnostics(app: FastAPI) -> None:
     route = f"{PATH_PREFIX.rstrip('/')}/_diagnostic" if PATH_PREFIX != "/" else "/_diagnostic"
+
     @app.get(route)
     async def _diagnostic(dep=Depends(api_dependency())):
         return {
@@ -531,7 +553,9 @@ def attach_mcpo_diagnostics(app: FastAPI) -> None:
             "mcp": _collect_connector_diagnostics(),
         }
 
+
 attach_mcpo_diagnostics(app)
+
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     import uvicorn
@@ -542,6 +566,7 @@ def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, 
         log_level=log_level or os.getenv("UVICORN_LOG_LEVEL", "info"),
         reload=reload,
     )
+
 
 if __name__ == "__main__":
     run()
