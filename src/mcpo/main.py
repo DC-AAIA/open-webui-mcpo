@@ -221,7 +221,6 @@ async def _connector_wrapper(url: str):
             reader = getattr(t, "stream_reader")
         if writer is None and hasattr(t, "stream_writer"):
             writer = getattr(t, "stream_writer")
-
         if (reader is None or writer is None) and hasattr(t, "duplex"):
             d = getattr(t, "duplex")
             if callable(d):
@@ -234,7 +233,6 @@ async def _connector_wrapper(url: str):
                     reader = getattr(d, "reader")
                 if writer is None and hasattr(d, "writer"):
                     writer = getattr(d, "writer")
-
         if (reader is None or writer is None) and hasattr(t, "transport"):
             inner = getattr(t, "transport")
             if inner is not None:
@@ -242,7 +240,6 @@ async def _connector_wrapper(url: str):
                     reader = getattr(inner, "reader")
                 if writer is None and hasattr(inner, "writer"):
                     writer = getattr(inner, "writer")
-
         if (reader is None or writer is None) and hasattr(t, "get_stream"):
             try:
                 pair = t.get_stream()
@@ -251,7 +248,6 @@ async def _connector_wrapper(url: str):
                     writer = writer or pair[1]
             except Exception:
                 pass
-
         if reader is None and hasattr(t, "reader") and callable(getattr(t, "reader")):
             try:
                 reader = t.reader()
@@ -262,7 +258,6 @@ async def _connector_wrapper(url: str):
                 writer = t.writer()
             except Exception:
                 pass
-
         return reader, writer
 
     try:
@@ -310,15 +305,12 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
         # Initialize and safely read protocolVersion across 1.12.x dicts and 1.13.x models
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
-
         # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
-
         # Prevent AttributeError: only call .get when init_result is a dict
         proto = None
         if isinstance(init_result, dict):
             proto = init_result.get("protocolVersion")
-
         # Prefer safe_proto when available
         proto = safe_proto if safe_proto is not None else proto
 
@@ -333,8 +325,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
             raw_tools = tools_result.get("tools", [])
         elif hasattr(tools_result, "tools"):
             raw_tools = getattr(tools_result, "tools") or []
-
-        # Minimal robustness if the first pass was empty
         if not raw_tools and hasattr(tools_result, "tools"):
             try:
                 raw_tools = getattr(tools_result, "tools") or []
@@ -406,7 +396,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
                 logger.warning("Skipping tool due to schema issue: %s; error: %s", t, ex)
 
         return parsed
-
 
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
@@ -574,7 +563,6 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
 
 def attach_mcpo_diagnostics(app: FastAPI) -> None:
     route = f"{PATH_PREFIX.rstrip('/')}/_diagnostic" if PATH_PREFIX != "/" else "/_diagnostic"
-
     @app.get(route)
     async def _diagnostic(dep=Depends(api_dependency())):
         return {
