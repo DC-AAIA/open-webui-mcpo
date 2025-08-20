@@ -18,7 +18,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN node -v && npm -v
 
 # CACHE BUST: put BEFORE COPY so subsequent layers rebuild
-ARG BUILD_REV=2025-08-14T17-35-00Z
+ARG BUILD_REV=2025-08-20T12-58-00Z
 ENV BUILD_REV=${BUILD_REV}
 RUN echo "BUILD_REV=${BUILD_REV}" > /build-rev.txt
 
