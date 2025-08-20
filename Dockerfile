@@ -18,7 +18,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN node -v && npm -v
 
 # CACHE BUST: put BEFORE COPY so subsequent layers rebuild
-ARG BUILD_REV=2025-08-20T12-58-00Z
+ARG BUILD_REV=2025-08-20T12-59-00Z
 ENV BUILD_REV=${BUILD_REV}
 RUN echo "BUILD_REV=${BUILD_REV}" > /build-rev.txt
 
@@ -32,7 +32,7 @@ RUN uv venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install mcpo from local source (pyproject.toml must be present)
-RUN python -m pip install --no-cache-dir --force-reinstall . && rm -rf ~/.cache
+RUN uv pip install --reinstall --no-cache-dir . && rm -rf ~/.cache
 
 # Verify mcpo installed correctly
 RUN which mcpo
