@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35f (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35g (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -105,7 +105,7 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# v0.0.35f: httpx needed for the 1.13.0 adapter branch
+# v0.0.35g: httpx needed for the 1.13.0 adapter branch
 try:
     import httpx
 except Exception:
@@ -116,7 +116,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35f"
+APP_VERSION = "0.0.35g"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -214,24 +214,30 @@ async def _connector_wrapper(url: str):
         if httpx is None:
             raise RuntimeError("httpx is required for MCP 1.13.0 transport adapter")
 
-        # Build an httpx.AsyncClient using base_url + headers (no call to create_mcp_http_client here)
+        # Build an httpx.AsyncClient using base_url + headers
         headers = _parse_headers(MCP_HEADERS) or []
         client = httpx.AsyncClient(base_url=url, headers=headers)
 
         transport = _StreamableHTTPTransport(client)
 
-        # Adjusted for MCP 1.13.0: transport is not an async context manager.
-        # Probe common attribute names for the duplex stream.
+        # Probe common attribute names for the duplex stream; be robust across MCP variants.
         try:
-            # Try canonical names first
             reader = getattr(transport, "reader", None)
             writer = getattr(transport, "writer", None)
 
-            # Fallbacks commonly seen in recent MCP builds
             if reader is None and hasattr(transport, "stream_reader"):
                 reader = getattr(transport, "stream_reader")
             if writer is None and hasattr(transport, "stream_writer"):
                 writer = getattr(transport, "stream_writer")
+
+            # Some builds expose a duplex object with .reader/.writer
+            if (reader is None or writer is None) and hasattr(transport, "duplex"):
+                duplex = getattr(transport, "duplex")
+                if duplex is not None:
+                    if reader is None and hasattr(duplex, "reader"):
+                        reader = getattr(duplex, "reader")
+                    if writer is None and hasattr(duplex, "writer"):
+                        writer = getattr(duplex, "writer")
 
             # Some variants offer a method returning both ends
             if (reader is None or writer is None) and hasattr(transport, "get_stream"):
@@ -240,6 +246,18 @@ async def _connector_wrapper(url: str):
                     if isinstance(pair, tuple) and len(pair) >= 2:
                         reader = reader or pair[0]
                         writer = writer or pair[1]
+                except Exception:
+                    pass
+
+            # Last resort: callables reader()/writer()
+            if reader is None and hasattr(transport, "reader") and callable(getattr(transport, "reader")):
+                try:
+                    reader = transport.reader()
+                except Exception:
+                    pass
+            if writer is None and hasattr(transport, "writer") and callable(getattr(transport, "writer")):
+                try:
+                    writer = transport.writer()
                 except Exception:
                     pass
 
@@ -255,7 +273,6 @@ async def _connector_wrapper(url: str):
     else:
         # Legacy or alternative connectors already yield (reader, writer) or (reader, writer, ...)
         async with _CONNECTOR(url) as ctx:
-            # Allow 2-tuple or longer tuple; we only need first two entries
             if isinstance(ctx, tuple) and len(ctx) >= 2:
                 yield ctx[0], ctx[1]
             else:
