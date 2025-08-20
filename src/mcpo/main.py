@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35
+Open WebUI MCPO - main.py v0.0.35a (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -98,7 +98,7 @@ _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35"
+APP_VERSION = "0.0.35a"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -311,18 +311,21 @@ def create_app() -> FastAPI:
 app = create_app()
 
 # -----------------------------------------------------------------------------
-# Backward-compatible entrypoint expected by container (matches v0.0.29)
+# Backward-compatible entrypoint expected by container (v0.0.29-compatible signature)
 # -----------------------------------------------------------------------------
 
-def run():
-    """Backward-compat entrypoint: start uvicorn server."""
+def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
+    """
+    Backward-compatible entrypoint: start uvicorn server.
+    Accepts keyword arguments because some Railway entrypoints call run(host=..., port=..., log_level=...).
+    """
     import uvicorn
     uvicorn.run(
         "mcpo.main:app",
-        host="0.0.0.0",
-        port=DEFAULT_PORT,
-        log_level=os.getenv("UVICORN_LOG_LEVEL", "info"),
-        reload=False,
+        host=host,
+        port=port,
+        log_level=log_level or os.getenv("UVICORN_LOG_LEVEL", "info"),
+        reload=reload,
     )
 
 if __name__ == "__main__":
