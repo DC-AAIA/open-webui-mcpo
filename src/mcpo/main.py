@@ -395,4 +395,19 @@ app = create_app()
 # Backward-compatible entrypoint expected by container (v0.0.29-compatible signature)
 # ----
 
-def run
+def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
+    """
+    Backward-compatible entrypoint: start uvicorn server.
+    Accepts keyword arguments because some Railway entrypoints call run(host=..., port=..., log_level=...).
+    """
+    import uvicorn
+    uvicorn.run(
+        "mcpo.main:app",
+        host=host,
+        port=port,
+        log_level=log_level or os.getenv("UVICORN_LOG_LEVEL", "info"),
+        reload=reload,
+    )
+
+if __name__ == "__main__":
+    run()
