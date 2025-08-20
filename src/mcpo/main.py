@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.34
+Open WebUI MCPO - main.py v0.0.35
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -35,7 +35,7 @@ from mcp.shared.exceptions import McpError
 
 def resolve_http_connector():
     """
-    Attempts to resolve a Streamable HTTP MCP connector across known API variants.
+    Resolve a Streamable HTTP MCP connector across known API variants.
     Returns: (connector_callable, connector_name, module_path, mcp_version_str)
     Raises: ImportError with diagnostics if none matched.
     """
@@ -51,22 +51,23 @@ def resolve_http_connector():
 
     candidates = []
 
-    # 1) mcp.client.streamable_http.connect (older variants)
+    # 1) mcp.client.streamable_http.* (primary module)
     try:
         m = import_module("mcp.client.streamable_http")
+        # 1a) Oldest variants
         if hasattr(m, "connect"):
             return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
-        candidates.append(("mcp.client.streamable_http", list(sorted(dir(m)))))
-        # 1b) Newer 1.13.0+ exposes create_mcp_http_client
+        # 1b) MCP 1.13.0+ new factory
         if hasattr(m, "create_mcp_http_client"):
             return (m.create_mcp_http_client, "streamable_http.create_mcp_http_client", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # 1c) Some variants expose connect_streamable_http
+        # 1c) Some intermediate variants
         if hasattr(m, "connect_streamable_http"):
             return (m.connect_streamable_http, "streamable_http.connect_streamable_http", getattr(m, "__file__", "<unknown>"), mcp_version)
+        candidates.append(("mcp.client.streamable_http", list(sorted(dir(m)))))
     except Exception as e:
         candidates.append(("mcp.client.streamable_http (import error)", str(e)))
 
-    # 2) mcp.client.http.streamable.connect (if present)
+    # 2) mcp.client.http.streamable.connect (alt placement)
     try:
         m = import_module("mcp.client.http.streamable")
         if hasattr(m, "connect"):
@@ -97,7 +98,7 @@ _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.34"
+APP_VERSION = "0.0.35"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -240,4 +241,89 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup():
-        logger.info
+        logger.info("Starting MCPO Server...")
+        logger.info(" Name: %s", APP_NAME)
+        logger.info(" Version: %s", APP_VERSION)
+        logger.info(" Description: %s", APP_DESCRIPTION)
+        logger.info(" Hostname: %s", os.uname().nodename if hasattr(os, "uname") else "unknown")
+        logger.info(" Port: %s", DEFAULT_PORT)
+        logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")
+        logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
+        logger.info(" Path Prefix: %s", PATH_PREFIX)
+
+        # Prove which MCP lib we resolved and where it came from
+        logger.info("MCP package version: %s", _MCP_VERSION)
+        logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
+
+        logger.info("Echo/Ping routes registered")
+        logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
+
+        try:
+            client_context = _CONNECTOR(MCP_SERVER_URL)
+        except Exception as e:
+            logger.error("Failed to create MCP client context via %s: %s", _CONNECTOR_NAME, e)
+            raise
+
+        async def mount_tool_routes(tools: List[ToolDef]):
+            for tool in tools:
+                route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
+                logger.info("Registering route: %s", route_path)
+
+                async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+                    try:
+                        async with _CONNECTOR(MCP_SERVER_URL) as (reader, writer):
+                            result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
+                        return JSONResponse(status_code=200, content=result)
+                    except HTTPException as he:
+                        raise he
+                    except Exception as e:
+                        logger.exception("Error calling tool %s at %s: %s", _tool.name, _route, e)
+                        raise HTTPException(status_code=502, detail=str(e))
+
+                app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
+
+        async def setup_tools():
+            async with client_context as (reader, writer, *_):
+                tools = await list_mcp_tools(reader, writer)
+                if not tools:
+                    logger.warning("No tools discovered from MCP server")
+                else:
+                    logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                await mount_tool_routes(tools)
+
+        try:
+            await setup_tools()
+        except Exception as e:
+            logger.error("Error during startup tool discovery/mount: %s", e)
+
+    @app.get("/")
+    async def root():
+        return {
+            "name": APP_NAME,
+            "version": APP_VERSION,
+            "description": APP_DESCRIPTION,
+            "docs": app.docs_url,
+            "openapi": app.openapi_url,
+        }
+
+    return app
+
+app = create_app()
+
+# -----------------------------------------------------------------------------
+# Backward-compatible entrypoint expected by container (matches v0.0.29)
+# -----------------------------------------------------------------------------
+
+def run():
+    """Backward-compat entrypoint: start uvicorn server."""
+    import uvicorn
+    uvicorn.run(
+        "mcpo.main:app",
+        host="0.0.0.0",
+        port=DEFAULT_PORT,
+        log_level=os.getenv("UVICORN_LOG_LEVEL", "info"),
+        reload=False,
+    )
+
+if __name__ == "__main__":
+    run()
