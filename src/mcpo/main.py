@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35n (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35o (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -124,7 +124,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35n"
+APP_VERSION = "0.0.35o"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -308,19 +308,27 @@ def _safe_get(obj: Any, attr: str, key: str) -> Optional[Any]:
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
+        # Initialize and safely read protocolVersion across 1.12.x dicts and 1.13.x models
         init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
+
+        # Additive safety lines bracketing the original proto extraction
         safe_proto = _safe_get(init_result, "protocolVersion", "protocolVersion")
         proto = (init_result or {}).get("protocolVersion")
         proto = safe_proto if safe_proto is not None else proto
+
         logger.info("Negotiated protocol version: %s", proto)
 
+        # List tools with retry to absorb transient notification/validation noise
         tools_result = await retry_jsonrpc(lambda: session.list_tools(), "tools/list", retries=1)
 
-        raw_tools = []
+        # tools_result may be dict-like in 1.12.x or a model with .tools in 1.13.x
+        raw_tools: List[Dict[str, Any]] = []
         if isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
         elif hasattr(tools_result, "tools"):
             raw_tools = getattr(tools_result, "tools") or []
+
+        # Minimal robustness if the first pass was empty
         if not raw_tools and hasattr(tools_result, "tools"):
             try:
                 raw_tools = getattr(tools_result, "tools") or []
