@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35d (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35e (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -116,7 +116,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35d"
+APP_VERSION = "0.0.35e"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -220,8 +220,8 @@ async def _connector_wrapper(url: str):
 
         transport = _StreamableHTTPTransport(client)
 
-        # v0.0.35d: transport is not an async CM yielding a tuple; enter explicitly and read attrs
-        await transport.__aenter__()
+        # Adjusted for MCP 1.13.0: transport is not an async context manager and has no __aenter__/__aexit__.
+        # Access reader/writer directly, and ensure client is closed on exit.
         try:
             reader = getattr(transport, "reader", None)
             writer = getattr(transport, "writer", None)
@@ -230,12 +230,9 @@ async def _connector_wrapper(url: str):
             yield reader, writer
         finally:
             try:
-                await transport.__aexit__(None, None, None)
-            finally:
-                try:
-                    await client.aclose()
-                except Exception:
-                    pass
+                await client.aclose()
+            except Exception:
+                pass
     else:
         # Legacy or alternative connectors already yield (reader, writer) or (reader, writer, ...)
         async with _CONNECTOR(url) as ctx:
@@ -398,19 +395,4 @@ app = create_app()
 # Backward-compatible entrypoint expected by container (v0.0.29-compatible signature)
 # ----
 
-def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
-    """
-    Backward-compatible entrypoint: start uvicorn server.
-    Accepts keyword arguments because some Railway entrypoints call run(host=..., port=..., log_level=...).
-    """
-    import uvicorn
-    uvicorn.run(
-        "mcpo.main:app",
-        host=host,
-        port=port,
-        log_level=log_level or os.getenv("UVICORN_LOG_LEVEL", "info"),
-        reload=reload,
-    )
-
-if __name__ == "__main__":
-    run()
+def run
