@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35h (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35i (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -91,6 +91,24 @@ def resolve_http_connector():
 
 _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
 
+# Optional: probe alternate http connectors for fallback inside wrapper
+def _resolve_alt_http_connector():
+    try:
+        mod = import_module("mcp.client.http.streamable")
+        if hasattr(mod, "connect"):
+            return getattr(mod, "connect")
+    except Exception:
+        pass
+    try:
+        mod = import_module("mcp.client.http")
+        if hasattr(mod, "connect"):
+            return getattr(mod, "connect")
+    except Exception:
+        pass
+    return None
+
+_ALT_HTTP_CONNECT = _resolve_alt_http_connector()
+
 # For MCP 1.13.0, we need access to StreamableHTTPTransport and types
 try:
     _streamable_http_mod = import_module("mcp.client.streamable_http")
@@ -102,7 +120,7 @@ except Exception:
     _StreamReader = None
     _StreamWriter = None
 
-# v0.0.35h: httpx needed for the 1.13.0 adapter branch
+# httpx for the 1.13.0 adapter branch
 try:
     import httpx
 except Exception:
@@ -113,7 +131,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35h"
+APP_VERSION = "0.0.35i"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -180,11 +198,6 @@ class ToolDef(BaseModel):
 # ----
 
 async def rpc_with_skip_notifications(coro, desc: str):
-    """
-    Runs an MCP RPC coroutine. If the streamable HTTP adapter surfaces a stray
-    notification body (e.g., 'notifications/initialized') as the HTTP response
-    and the MCP client raises a Pydantic validation error, skip once and retry.
-    """
     try:
         return await coro
     except PydValidationError as e:
@@ -195,95 +208,100 @@ async def rpc_with_skip_notifications(coro, desc: str):
         raise
 
 # ----
-# Connector wrapper for MCP 1.13.0 (normalize to yield (reader, writer))
+# Connector wrapper (normalize to yield (reader, writer))
 # ----
 
 @asynccontextmanager
 async def _connector_wrapper(url: str):
     """
     Normalizes connectors to an async context that yields (reader, writer).
-    - For 'create_mcp_http_client', build StreamableHTTPTransport around the httpx.AsyncClient.
-    - For legacy connectors returning (reader, writer), simply delegate.
+    Prefers streamable_http.create_mcp_http_client when available, with a fallback to
+    http.streamable.connect/http.connect if the transport does not expose a duplex.
     """
     if _CONNECTOR_NAME.endswith("create_mcp_http_client"):
-        if _StreamableHTTPTransport is None:
-            raise RuntimeError("StreamableHTTPTransport not available in mcp.client.streamable_http")
-        if httpx is None:
-            raise RuntimeError("httpx is required for MCP 1.13.0 transport adapter")
+        if _StreamableHTTPTransport is None or httpx is None:
+            raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
         headers = _parse_headers(MCP_HEADERS) or []
         client = httpx.AsyncClient(base_url=url, headers=headers)
         transport = _StreamableHTTPTransport(client)
 
-        # Robust probing across MCP 1.13.x variants
-        try:
-            # Canonical
-            reader = getattr(transport, "reader", None)
-            writer = getattr(transport, "writer", None)
+        def _extract_duplex(t):
+            # Try all surfaces; return (reader, writer) or (None, None)
+            reader = getattr(t, "reader", None)
+            writer = getattr(t, "writer", None)
 
-            # stream_* fallbacks
-            if reader is None and hasattr(transport, "stream_reader"):
-                reader = getattr(transport, "stream_reader")
-            if writer is None and hasattr(transport, "stream_writer"):
-                writer = getattr(transport, "stream_writer")
+            if reader is None and hasattr(t, "stream_reader"):
+                reader = getattr(t, "stream_reader")
+            if writer is None and hasattr(t, "stream_writer"):
+                writer = getattr(t, "stream_writer")
 
-            # duplex attribute with .reader/.writer
-            if (reader is None or writer is None) and hasattr(transport, "duplex"):
-                duplex = getattr(transport, "duplex")
-                if duplex is not None:
-                    if reader is None and hasattr(duplex, "reader"):
-                        reader = getattr(duplex, "reader")
-                    if writer is None and hasattr(duplex, "writer"):
-                        writer = getattr(duplex, "writer")
+            if (reader is None or writer is None) and hasattr(t, "duplex"):
+                d = getattr(t, "duplex")
+                if callable(d):
+                    try:
+                        d = d()
+                    except Exception:
+                        d = None
+                if d is not None:
+                    if reader is None and hasattr(d, "reader"):
+                        reader = getattr(d, "reader")
+                    if writer is None and hasattr(d, "writer"):
+                        writer = getattr(d, "writer")
 
-            # nested transport.reader/writer (seen in some builds)
-            if (reader is None or writer is None) and hasattr(transport, "transport"):
-                inner = getattr(transport, "transport")
+            if (reader is None or writer is None) and hasattr(t, "transport"):
+                inner = getattr(t, "transport")
                 if inner is not None:
                     if reader is None and hasattr(inner, "reader"):
                         reader = getattr(inner, "reader")
                     if writer is None and hasattr(inner, "writer"):
                         writer = getattr(inner, "writer")
 
-            # duplex() callable returning an object with .reader/.writer
-            if (reader is None or writer is None) and hasattr(transport, "duplex") and callable(getattr(transport, "duplex")):
+            if (reader is None or writer is None) and hasattr(t, "get_stream"):
                 try:
-                    d = transport.duplex()
-                    if d is not None:
-                        if reader is None and hasattr(d, "reader"):
-                            reader = getattr(d, "reader")
-                        if writer is None and hasattr(d, "writer"):
-                            writer = getattr(d, "writer")
-                except Exception:
-                    pass
-
-            # get_stream() tuple
-            if (reader is None or writer is None) and hasattr(transport, "get_stream"):
-                try:
-                    pair = transport.get_stream()
+                    pair = t.get_stream()
                     if isinstance(pair, tuple) and len(pair) >= 2:
                         reader = reader or pair[0]
                         writer = writer or pair[1]
                 except Exception:
                     pass
 
-            # callables reader()/writer()
-            if reader is None and hasattr(transport, "reader") and callable(getattr(transport, "reader")):
+            if reader is None and hasattr(t, "reader") and callable(getattr(t, "reader")):
                 try:
-                    reader = transport.reader()
+                    reader = t.reader()
                 except Exception:
                     pass
-            if writer is None and hasattr(transport, "writer") and callable(getattr(transport, "writer")):
+            if writer is None and hasattr(t, "writer") and callable(getattr(t, "writer")):
                 try:
-                    writer = transport.writer()
+                    writer = t.writer()
                 except Exception:
                     pass
 
-            if reader is None or writer is None:
-                raise RuntimeError("StreamableHTTPTransport did not provide stream reader/writer")
+            return reader, writer
 
-            yield reader, writer
+        try:
+            r, w = _extract_duplex(transport)
+            if r is not None and w is not None:
+                try:
+                    yield r, w
+                    return
+                finally:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
+
+            # Fallback: use alternate http connector if available
+            if _ALT_HTTP_CONNECT is None:
+                raise RuntimeError("StreamableHTTPTransport did not provide stream reader/writer and no alternate HTTP connector is available")
+
+            async with _ALT_HTTP_CONNECT(url) as ctx:
+                if isinstance(ctx, tuple) and len(ctx) >= 2:
+                    yield ctx[0], ctx[1]
+                else:
+                    raise RuntimeError(f"Alternate HTTP connector returned unexpected context: {type(ctx)}")
         finally:
+            # Ensure client is closed if not already
             try:
                 await client.aclose()
             except Exception:
@@ -448,10 +466,6 @@ app = create_app()
 # ----
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
-    """
-    Backward-compatible entrypoint: start uvicorn server.
-    Accepts keyword arguments because some Railway entrypoints call run(host=..., port=..., log_level=...).
-    """
     import uvicorn
     uvicorn.run(
         "mcpo.main:app",
