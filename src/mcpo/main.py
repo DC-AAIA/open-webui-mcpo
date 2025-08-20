@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35a (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35b (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -18,6 +18,7 @@ import os
 import json
 import logging
 from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,7 +58,7 @@ def resolve_http_connector():
         # 1a) Oldest variants
         if hasattr(m, "connect"):
             return (m.connect, "streamable_http.connect", getattr(m, "__file__", "<unknown>"), mcp_version)
-        # 1b) MCP 1.13.0+ new factory
+        # 1b) MCP 1.13.0+ new factory (returns httpx.AsyncClient)
         if hasattr(m, "create_mcp_http_client"):
             return (m.create_mcp_http_client, "streamable_http.create_mcp_http_client", getattr(m, "__file__", "<unknown>"), mcp_version)
         # 1c) Some intermediate variants
@@ -93,18 +94,47 @@ def resolve_http_connector():
 
 _CONNECTOR, _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH, _MCP_VERSION = resolve_http_connector()
 
+# For MCP 1.13.0, we need access to StreamableHTTPTransport and types
+try:
+    _streamable_http_mod = import_module("mcp.client.streamable_http")
+    _StreamableHTTPTransport = getattr(_streamable_http_mod, "StreamableHTTPTransport", None)
+    _StreamReader = getattr(_streamable_http_mod, "StreamReader", None)
+    _StreamWriter = getattr(_streamable_http_mod, "StreamWriter", None)
+except Exception:
+    _StreamableHTTPTransport = None
+    _StreamReader = None
+    _StreamWriter = None
+
 # -----------------------------------------------------------------------------
 # App Config
 # -----------------------------------------------------------------------------
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35a"
+APP_VERSION = "0.0.35b"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
+
+# Optional headers for MCP HTTP client (ensure sequence of (k, v) tuples if set)
+MCP_HEADERS = os.getenv("MCP_HEADERS", "")  # format: "Key1:Val1,Key2:Val2"
+def _parse_headers(hs: str):
+    if not hs.strip():
+        return None
+    pairs = []
+    for part in hs.split(","):
+        if not part.strip():
+            continue
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        k = k.strip()
+        v = v.strip()
+        if k:
+            pairs.append((k, v))
+    return pairs or None
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -160,6 +190,46 @@ async def rpc_with_skip_notifications(coro, desc: str):
             logger.warning("rpc_with_skip_notifications: validation issue on %s; retrying once", desc)
             return await coro
         raise
+
+# -----------------------------------------------------------------------------
+# Connector wrapper for MCP 1.13.0 (normalize to yield (reader, writer))
+# -----------------------------------------------------------------------------
+
+@asynccontextmanager
+async def _connector_wrapper(url: str):
+    """
+    Normalizes connectors to an async context that yields (reader, writer).
+    - For 'create_mcp_http_client', build StreamableHTTPTransport around the httpx.AsyncClient.
+    - For legacy connectors returning (reader, writer), simply delegate.
+    """
+    if _CONNECTOR_NAME.endswith("create_mcp_http_client"):
+        if _StreamableHTTPTransport is None:
+            raise RuntimeError("StreamableHTTPTransport not available in mcp.client.streamable_http")
+        # Prepare httpx.AsyncClient via the MCP factory; pass headers in correct shape
+        headers = _parse_headers(MCP_HEADERS) or []
+        # Build kwargs for the factory; many MCP variants accept 'base_url' and 'headers'
+        create_kwargs = {"base_url": url}
+        if headers:
+            create_kwargs["headers"] = headers
+        client = _CONNECTOR(**create_kwargs)  # returns httpx.AsyncClient
+        transport = _StreamableHTTPTransport(client)  # create transport around client
+        # The transport acts as an async context manager exposing .reader/.writer
+        try:
+            async with transport as (reader, writer):
+                yield reader, writer
+        finally:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+    else:
+        # Legacy or alternative connectors already yield (reader, writer) or (reader, writer, ...)
+        async with _CONNECTOR(url) as ctx:
+            # Allow 2-tuple or longer tuple; we only need first two entries
+            if isinstance(ctx, tuple) and len(ctx) >= 2:
+                yield ctx[0], ctx[1]
+            else:
+                raise RuntimeError(f"Unexpected connector context result: {type(ctx)}")
 
 # -----------------------------------------------------------------------------
 # MCP client lifecycle and dynamic route generation
@@ -259,7 +329,7 @@ def create_app() -> FastAPI:
         logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
 
         try:
-            client_context = _CONNECTOR(MCP_SERVER_URL)
+            client_context = _connector_wrapper(MCP_SERVER_URL)
         except Exception as e:
             logger.error("Failed to create MCP client context via %s: %s", _CONNECTOR_NAME, e)
             raise
@@ -271,7 +341,7 @@ def create_app() -> FastAPI:
 
                 async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
-                        async with _CONNECTOR(MCP_SERVER_URL) as (reader, writer):
+                        async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
                     except HTTPException as he:
@@ -283,7 +353,7 @@ def create_app() -> FastAPI:
                 app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
         async def setup_tools():
-            async with client_context as (reader, writer, *_):
+            async with client_context as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
                 if not tools:
                     logger.warning("No tools discovered from MCP server")
