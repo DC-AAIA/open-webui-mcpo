@@ -134,7 +134,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35j"
+APP_VERSION = "0.0.35l"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
