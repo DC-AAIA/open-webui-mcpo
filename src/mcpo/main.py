@@ -1,9 +1,9 @@
 """
-Open WebUI MCPO - main.py v0.0.35l (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35m (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
-- Adds resilience to occasional stray notification bodies (e.g., "notifications/initialized")
+- Adds resilience to occasional transient notification/validation noise (e.g., "notifications/initialized")
   surfaced by the HTTP adapter by retrying the RPC once.
 
 Behavior aligned with n8n-mcp (czlonkowski):
@@ -16,8 +16,9 @@ References:
 
 import os
 import json
+import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -134,7 +135,7 @@ except Exception:
 # ----
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35l"
+APP_VERSION = "0.0.35m"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -197,18 +198,37 @@ class ToolDef(BaseModel):
     outputSchema: Optional[Dict[str, Any]] = None
 
 # ----
-# Resilience helper: skip stray notification envelopes and retry once
+# Retry helper for transient MCP 1.12.x notification/validation noise
 # ----
 
-async def rpc_with_skip_notifications(coro, desc: str):
-    try:
-        return await coro
-    except PydValidationError as e:
-        txt = str(e)
-        if "notifications/initialized" in txt or "JSONRPCMessage" in txt:
-            logger.warning("rpc_with_skip_notifications: validation issue on %s; retrying once", desc)
-            return await coro
-        raise
+async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
+    """
+    Retry wrapper for JSON-RPC calls that sometimes fail due to transient
+    notification/validation noise in MCP 1.12.x.
+    call_fn must be a zero-arg function returning a new coroutine each attempt.
+    """
+    for attempt in range(retries + 1):
+        try:
+            return await call_fn()
+        except Exception as e:
+            txt = str(e)
+            transient = (
+                "notifications/initialized" in txt or
+                "JSONRPCMessage" in txt or
+                "TaskGroup" in txt
+            )
+            # Handle ExceptionGroup shape as well
+            if not transient and hasattr(e, "exceptions"):
+                for sub in getattr(e, "exceptions", []):
+                    s = str(sub)
+                    if "notifications/initialized" in s or "JSONRPCMessage" in s:
+                        transient = True
+                        break
+            if attempt < retries and transient:
+                logging.getLogger("mcpo").warning("Transient error on %s; retrying (%d/%d)", desc, attempt + 1, retries)
+                await asyncio.sleep(sleep_s)
+                continue
+            raise
 
 # ----
 # Connector wrapper (normalize to yield (reader, writer))
@@ -324,14 +344,21 @@ async def _connector_wrapper(url: str):
 
 async def list_mcp_tools(reader, writer) -> List[ToolDef]:
     async with ClientSession(reader, writer) as session:
-        init_result = await rpc_with_skip_notifications(session.initialize(), "initialize")
+        init_result = await retry_jsonrpc(lambda: session.initialize(), "initialize", retries=1)
         proto = (init_result or {}).get("protocolVersion")
         logger.info("Negotiated protocol version: %s", proto)
 
-        tools_result = await rpc_with_skip_notifications(session.list_tools(), "tools/list")
-        tools = tools_result.get("tools", [])
+        tools_result = await retry_jsonrpc(lambda: session.list_tools(), "tools/list", retries=1)
+
+        # tools_result may be dict-like in 1.12.x
+        raw_tools = []
+        if isinstance(tools_result, dict):
+            raw_tools = tools_result.get("tools", [])
+        elif hasattr(tools_result, "tools"):
+            raw_tools = getattr(tools_result, "tools") or []
+
         parsed: List[ToolDef] = []
-        for t in tools:
+        for t in raw_tools:
             try:
                 parsed.append(
                     ToolDef(
@@ -358,7 +385,8 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         content = result.get("content") or []
         if not content:
             return {}
-        text = content[0].get("text") if isinstance(content[0], dict) else None
+        first = content[0]
+        text = first.get("text") if isinstance(first, dict) else None
         if not text:
             return {"content": content}
         try:
@@ -402,7 +430,11 @@ def create_app() -> FastAPI:
         logger.info(" Name: %s", APP_NAME)
         logger.info(" Version: %s", APP_VERSION)
         logger.info(" Description: %s", APP_DESCRIPTION)
-        logger.info(" Hostname: %s", os.uname().nodename if hasattr(os, "uname") else "unknown")
+        try:
+            hostname = os.uname().nodename  # type: ignore[attr-defined]
+        except Exception:
+            hostname = "unknown"
+        logger.info(" Hostname: %s", hostname)
         logger.info(" Port: %s", DEFAULT_PORT)
         logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
@@ -439,18 +471,33 @@ def create_app() -> FastAPI:
                 app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
         async def setup_tools():
-            async with client_context as (reader, writer):
+            # First attempt
+            try:
+                async with client_context as (reader, writer):
+                    tools = await list_mcp_tools(reader, writer)
+                    if not tools:
+                        logger.warning("No tools discovered from MCP server")
+                    else:
+                        logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                    await mount_tool_routes(tools)
+                    return
+            except Exception as e:
+                logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
+                await asyncio.sleep(0.1)
+
+            # Second attempt with a fresh connector
+            async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
                 if not tools:
-                    logger.warning("No tools discovered from MCP server")
+                    logger.warning("No tools discovered from MCP server (after retry)")
                 else:
-                    logger.info("Discovered %d tool(s) from MCP server", len(tools))
+                    logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
                 await mount_tool_routes(tools)
 
         try:
             await setup_tools()
-        except Exception as e:
-            logger.error("Error during startup tool discovery/mount: %s", e)
+        except Exception:
+            logger.exception("Error during startup tool discovery/mount")
 
     @app.get("/")
     async def root():
@@ -467,7 +514,7 @@ def create_app() -> FastAPI:
 app = create_app()
 
 # ----
-# Diagnostic helpers (additive in v0.0.35k)
+# Diagnostic helpers
 # ----
 
 def _collect_connector_diagnostics() -> Dict[str, Any]:
