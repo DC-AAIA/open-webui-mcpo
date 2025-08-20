@@ -32,7 +32,7 @@ RUN uv venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Install mcpo from local source (pyproject.toml must be present)
-RUN uv pip install . && rm -rf ~/.cache
+RUN python -m pip install --no-cache-dir --force-reinstall . && rm -rf ~/.cache
 
 # Verify mcpo installed correctly
 RUN which mcpo
