@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35y (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35z (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -115,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35y"
+APP_VERSION = "0.0.35z"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -182,7 +182,7 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                         transient = True
                         break
             if attempt < retries and transient:
-                logger.warning("Transient error on %s; retrying (%d/%d)", desc, attempt + 1, retries)
+                logging.getLogger("mcpo").warning("Transient error on %s; retrying (%d/%d)", desc, attempt + 1, retries)
                 await asyncio.sleep(sleep_s)
                 continue
             raise
@@ -324,7 +324,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         if not raw_tools and isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
 
-        # DEBUG: log a sample tool shape to finalize field mapping
         try:
             if raw_tools:
                 sample = raw_tools[0]
@@ -390,11 +389,26 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         try:
             resp = await session.call_tool(name=name, arguments=arguments)
         except McpError as me:
-            raise HTTPException(status_code=400, detail={"mcp_error": me.message})
+            detail = {"mcp_error": getattr(me, "message", str(me))}
+            try:
+                if hasattr(me, "args") and me.args:
+                    detail["args"] = [str(a) for a in me.args]
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail=detail)
         except PydValidationError as e:
             raise HTTPException(status_code=502, detail={"validation_error": str(e)})
 
         result = resp or {}
+        try:
+            if isinstance(result, dict):
+                if "error" in result and result["error"]:
+                    raise HTTPException(status_code=502, detail={"mcp_error": result["error"]})
+                if "errors" in result and result["errors"]:
+                    raise HTTPException(status_code=502, detail={"mcp_errors": result["errors"]})
+        except HTTPException:
+            raise
+
         content = result.get("content") or []
         if not content:
             return {}
@@ -408,6 +422,7 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             return {"raw": text}
 
 _DISCOVERED_TOOL_NAMES: List[str] = []
+_DISCOVERED_TOOLS_MIN: List[Dict[str, Any]] = []
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -498,6 +513,16 @@ def create_app() -> FastAPI:
                         logger.info("Discovered %d tool(s) from MCP server", len(tools))
                         _DISCOVERED_TOOL_NAMES.clear()
                         _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
+                        _DISCOVERED_TOOLS_MIN.clear()
+                        for t in tools:
+                            try:
+                                _DISCOVERED_TOOLS_MIN.append({
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "inputSchema": t.inputSchema,
+                                })
+                            except Exception:
+                                pass
                         await mount_tool_routes(tools)
                 return
             except Exception as e:
@@ -512,6 +537,16 @@ def create_app() -> FastAPI:
                     logger.info("Discovered %d tool(s) from MCP server (after retry)", len(tools))
                     _DISCOVERED_TOOL_NAMES.clear()
                     _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
+                    _DISCOVERED_TOOLS_MIN.clear()
+                    for t in tools:
+                        try:
+                            _DISCOVERED_TOOLS_MIN.append({
+                                "name": t.name,
+                                "description": t.description,
+                                "inputSchema": t.inputSchema,
+                            })
+                        except Exception:
+                            pass
                     await mount_tool_routes(tools)
 
         try:
@@ -573,6 +608,14 @@ def attach_tools_listing(app: FastAPI) -> None:
         return {"tools": list(_DISCOVERED_TOOL_NAMES)}
 
 attach_tools_listing(app)
+
+def attach_tools_full_listing(app: FastAPI) -> None:
+    route = f"{PATH_PREFIX.rstrip('/')}/_tools_full" if PATH_PREFIX != "/" else "/_tools_full"
+    @app.get(route)
+    async def _tools_full(dep=Depends(api_dependency())):
+        return {"tools": [dict(item) for item in _DISCOVERED_TOOLS_MIN]}
+
+attach_tools_full_listing(app)
 
 def run(host: str = "0.0.0.0", port: int = DEFAULT_PORT, log_level: str = None, reload: bool = False, *args, **kwargs):
     import uvicorn
