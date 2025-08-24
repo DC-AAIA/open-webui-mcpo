@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35z (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35aa (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -115,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35z"
+APP_VERSION = "0.0.35aa"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -567,6 +567,71 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
+# --- Minimal OpenAPI augmentation for OWUI tool mapping (added) ---
+from fastapi.openapi.utils import get_openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=APP_NAME,
+        version=APP_VERSION,
+        description=APP_DESCRIPTION,
+        routes=app.routes,
+    )
+
+    # 1) Security scheme for x-api-key
+    components = schema.setdefault("components", {})
+    sec = components.setdefault("securitySchemes", {})
+    sec["apiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+    }
+
+    # 2) Ensure POST /tools/time is advertised and secured
+    paths = schema.setdefault("paths", {})
+    post_tools_time = paths.setdefault("/tools/time", {}).setdefault("post", {})
+    post_tools_time.update({
+        "operationId": "mcpo_time",
+        "summary": "Invoke the time tool",
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "echo": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        },
+        "responses": {
+            "200": {
+                "description": "Successful tool response",
+                "content": {
+                    "application/json": {
+                        "schema": {"type": "object"}
+                    }
+                }
+            }
+        },
+        "security": [{"apiKeyAuth": []}],
+        "tags": ["tools"],
+    })
+
+    # Optional default security
+    schema["security"] = [{"apiKeyAuth": []}]
+
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+# Bind the custom OpenAPI generator
+app.openapi = custom_openapi
+# --- End minimal OpenAPI augmentation ---
 
 def _collect_connector_diagnostics() -> Dict[str, Any]:
     info = {
