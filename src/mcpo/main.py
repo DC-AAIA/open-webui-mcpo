@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35aa (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35ab (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -115,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35aa"
+APP_VERSION = "0.0.35ab"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -152,10 +152,18 @@ class APIKeyHeader(BaseModel):
 def api_dependency():
     from fastapi import Request
     async def _dep(request: Request) -> APIKeyHeader:
+        # Accept either x-api-key or Authorization: Bearer <token>
         key = request.headers.get("x-api-key")
+        if not key:
+            auth = request.headers.get("authorization") or request.headers.get("Authorization")
+            if auth and auth.lower().startswith("bearer "):
+                key = auth.split(" ", 1)[1].strip()
+
         if not key or key != API_KEY:
             raise HTTPException(status_code=401, detail="Unauthorized")
+
         return APIKeyHeader(api_key=key)
+    
     return _dep
 
 class ToolDef(BaseModel):
