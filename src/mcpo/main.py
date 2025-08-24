@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.35ab (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.35ac (reconciled to v0.0.29 entrypoint)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -115,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35ab"
+APP_VERSION = "0.0.35ac"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -404,6 +404,10 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
             except Exception:
                 pass
             raise HTTPException(status_code=400, detail=detail)
+        except RuntimeError as re:
+            # Tolerate MCP backends that return non-structured content or raise runtime result errors
+            # Surface as a raw payload so the caller can see the underlying message
+            return {"raw_error": str(re)}      
         except PydValidationError as e:
             raise HTTPException(status_code=502, detail={"validation_error": str(e)})
 
