@@ -1,10 +1,10 @@
 """
-Open WebUI MCPO - main.py v0.0.35ac (reconciled to v0.0.29 entrypoint)
+Open WebUI MCPO - main.py v0.0.36 (header parsing fix)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
-- Adds resilience to occasional transient notification/validation noise (e.g., "notifications/initialized")
-  surfaced by the HTTP adapter by retrying the RPC once.
+- FIXED: Authorization header parsing for n8n-mcp authentication
+- Adds resilience to occasional transient notification/validation noise
 
 Behavior aligned with n8n-mcp (czlonkowski):
 - Handshake: initialize -> tools/list -> generate FastAPI routes -> tools/call per invocation.
@@ -115,7 +115,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.35ac"
+APP_VERSION = "0.0.36"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -124,10 +124,34 @@ API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
 MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 
-def _parse_headers(hs: str):
+def _parse_headers(hs: str) -> Dict[str, str]:
+    """Parse header string into dict for httpx client.
+    
+    Supports formats:
+    - "Authorization: Bearer TOKEN"
+    - "key1:value1,key2:value2"
+    - JSON format: {"key": "value"}
+    """
     if not hs.strip():
-        return None
-    pairs = []
+        return {}
+    
+    # Try JSON format first
+    if hs.strip().startswith("{"):
+        try:
+            return json.loads(hs)
+        except:
+            pass
+    
+    headers = {}
+    
+    # Check for single Authorization header format
+    if hs.startswith("Authorization:") or hs.startswith("authorization:"):
+        parts = hs.split(":", 1)
+        if len(parts) == 2:
+            headers[parts[0].strip()] = parts[1].strip()
+            return headers
+    
+    # Try comma-separated format
     for part in hs.split(","):
         if not part.strip():
             continue
@@ -137,8 +161,9 @@ def _parse_headers(hs: str):
         k = k.strip()
         v = v.strip()
         if k:
-            pairs.append((k, v))
-    return pairs or None
+            headers[k] = v
+    
+    return headers
 
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
@@ -208,14 +233,12 @@ async def _connector_wrapper(url: str):
     if _StreamableHTTPTransport is None or httpx is None:
         raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
-    headers = _parse_headers(MCP_HEADERS) or []
+    headers = _parse_headers(MCP_HEADERS)
+    
     if headers:
-        try:
-            header_keys = [k for (k, _v) in headers]
-            logger.info("MCP_HEADERS configured with keys: %s", header_keys)
-        except Exception:
-            logger.info("MCP_HEADERS present but keys could not be listed safely")
-
+        logger.info("MCP_HEADERS configured with keys: %s", list(headers.keys()))
+    
+    # Create httpx client with headers
     client = httpx.AsyncClient(base_url=url, headers=headers)
     transport = _StreamableHTTPTransport(client)
 
@@ -407,7 +430,7 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         except RuntimeError as re:
             # Tolerate MCP backends that return non-structured content or raise runtime result errors
             # Surface as a raw payload so the caller can see the underlying message
-            return {"raw_error": str(re)}      
+            return {"raw_error": str(re)}
         except PydValidationError as e:
             raise HTTPException(status_code=502, detail={"validation_error": str(e)})
 
