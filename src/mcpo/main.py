@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.40 (Open WebUI's request format Fix)
+Open WebUI MCPO - main.py v0.0.40.2 (FastAPI the body is optional Fix)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
 from importlib import import_module
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
@@ -136,7 +136,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.40"
+APP_VERSION = "0.0.40.2"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -821,7 +821,7 @@ def create_app() -> FastAPI:
                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                 logger.info("Registering route: %s", route_path)
 
-                async def handler(payload: Optional[Dict[str, Any]] = None, _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+                async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
                         # CONSERVATIVE FIX: Handle missing request body for Open WebUI compatibility
                         if payload is None:
