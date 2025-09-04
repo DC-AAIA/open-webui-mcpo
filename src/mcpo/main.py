@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.39 (Conservative Authentication Fix)
+Open WebUI MCPO - main.py v0.0.40 (Open WebUI's request format Fix)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -136,7 +136,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.39"
+APP_VERSION = "0.0.40"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -823,6 +823,12 @@ def create_app() -> FastAPI:
 
                 async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
+                        # CONSERVATIVE FIX: Handle missing request body for Open WebUI compatibility
+        if payload is None:
+            logger.info(
+                "No request body provided - using empty dict for Open WebUI compatibility"
+            )
+            payload = {}                         
                         # Try direct HTTP first (proven working method)
                         result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
