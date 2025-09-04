@@ -1,16 +1,15 @@
 """
-Open WebUI MCPO - main.py v0.0.41 (FastAPI Empty Schema Fix)
+Open WebUI MCPO - main.py v0.0.40 (Open WebUI's request format Fix)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
 - FIXED: Uses direct HTTP as PRIMARY method for authentication compatibility
-- FIXED: Creates GET routes for tools with empty input schemas (Open WebUI compatibility)
 - PRESERVES: ALL existing v0.0.38.1 functionality and error handling (1134 lines)
 - CONSERVATIVE: Only changes method priority in setup_tools() function
 
-Changes from v0.0.40:
-- Enhanced mount_tool_routes() to detect empty input schemas
-- Creates GET routes for parameter-less tools (like n8n_list_available_tools)
+Changes from v0.0.38.1:
+- Modified setup_tools() to try direct HTTP FIRST (proven working method)
+- Falls back to MCP connector if direct HTTP fails
 - Preserves ALL existing MCP connector logic, MCPRemoteManager, and error handling
 - ALL 1134 lines of working code preserved
 
@@ -137,7 +136,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.41"
+APP_VERSION = "0.0.40"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -822,66 +821,30 @@ def create_app() -> FastAPI:
                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                 logger.info("Registering route: %s", route_path)
 
-                # CRITICAL FIX: Check if tool requires parameters
-                input_schema = tool.inputSchema or {}
-                properties = input_schema.get('properties', {})
-                required_fields = input_schema.get('required', [])
-                
-                # Tool needs no parameters - make request body optional for Open WebUI compatibility
-                if not properties and not required_fields:
-                    logger.info("Tool %s has no parameters - creating GET route for Open WebUI", tool.name)
-                    
-                    async def create_get_handler(_tool=tool):
-                        async def handler(dep=Depends(api_dependency())):
-                            """Handler for tools with no parameters - no request body required"""
-                            try:
-                                # Use empty dict as arguments since no parameters expected
-                                result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, {})
-                                return JSONResponse(status_code=200, content=result)
-                            except Exception as e:
-                                # Fall back to original MCP connector
-                                logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
-                                try:
-                                    async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
-                                        result = await call_mcp_tool(reader, writer, _tool.name, {})
-                                        return JSONResponse(status_code=200, content=result)
-                                except HTTPException as he:
-                                    raise he
-                                except Exception as fe:
-                                    logger.exception("Both direct HTTP and MCP connector failed for tool %s: %s, %s", _tool.name, e, fe)
-                                    raise HTTPException(status_code=502, detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}")
-                        return handler
-                    
-                    # Register GET route for tools with no parameters
-                    app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(create_get_handler(tool))
-
-                # Always create POST route for all tools (backward compatibility)
-                async def create_post_handler(_tool=tool):
-                    async def handler(payload: Optional[Dict[str, Any]] = None, dep=Depends(api_dependency())):
+                async def handler(payload: Optional[Dict[str, Any]] = None, _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+                    try:
+                        # CONSERVATIVE FIX: Handle missing request body for Open WebUI compatibility
+                        if payload is None:
+                            logger.info("No request body provided - using empty dict for Open WebUI compatibility")
+                            payload = {}
+                        
+                        # Try direct HTTP first (proven working method)
+                        result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
+                        return JSONResponse(status_code=200, content=result)
+                    except Exception as e:
+                        # Fall back to original MCP connector
+                        logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
                         try:
-                            # Handle missing request body for Open WebUI compatibility
-                            if payload is None:
-                                logger.info("No request body provided - using empty dict for Open WebUI compatibility")
-                                payload = {}
-                            
-                            # Try direct HTTP first (proven working method)
-                            result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
-                            return JSONResponse(status_code=200, content=result)
-                        except Exception as e:
-                            # Fall back to original MCP connector
-                            logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
-                            try:
-                                async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
-                                    result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                                    return JSONResponse(status_code=200, content=result)
-                            except HTTPException as he:
-                                raise he
-                            except Exception as fe:
-                                logger.exception("Both direct HTTP and MCP connector failed for tool %s: %s, %s", _tool.name, e, fe)
-                                raise HTTPException(status_code=502, detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}")
-                    return handler
+                            async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
+                                result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
+                                return JSONResponse(status_code=200, content=result)
+                        except HTTPException as he:
+                            raise he
+                        except Exception as fe:
+                            logger.exception("Both direct HTTP and MCP connector failed for tool %s: %s, %s", _tool.name, e, fe)
+                            raise HTTPException(status_code=502, detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}")
 
-                app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(create_post_handler(tool))
+                app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
         async def setup_tools():
             try:
