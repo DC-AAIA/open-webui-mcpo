@@ -821,14 +821,13 @@ def create_app() -> FastAPI:
                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                 logger.info("Registering route: %s", route_path)
 
-                async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+                async def handler(payload: Optional[Dict[str, Any]] = None, _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
                         # CONSERVATIVE FIX: Handle missing request body for Open WebUI compatibility
-        if payload is None:
-            logger.info(
-                "No request body provided - using empty dict for Open WebUI compatibility"
-            )
-            payload = {}                         
+                        if payload is None:
+                            logger.info("No request body provided - using empty dict for Open WebUI compatibility")
+                            payload = {}
+                        
                         # Try direct HTTP first (proven working method)
                         result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
