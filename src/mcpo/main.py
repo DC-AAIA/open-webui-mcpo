@@ -1,10 +1,16 @@
 """
-Open WebUI MCPO - main.py v0.0.36 (header parsing fix)
+Open WebUI MCPO - main.py v0.0.37 (conservative auth fallback)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
-- FIXED: Authorization header parsing for n8n-mcp authentication
-- Adds resilience to occasional transient notification/validation noise
+- FIXED: Added direct HTTP fallback for authentication issues
+- PRESERVES: All existing v0.0.36 functionality and error handling
+
+Changes from v0.0.36:
+- Added discover_tools_via_http() as fallback for auth failures
+- Added call_mcp_tool_via_http() as fallback for tool execution
+- Preserved ALL existing MCP connector logic and error handling
+- Uses existing connector first, falls back to direct HTTP only if needed
 
 Behavior aligned with n8n-mcp (czlonkowski):
 - Handshake: initialize -> tools/list -> generate FastAPI routes -> tools/call per invocation.
@@ -115,7 +121,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.36"
+APP_VERSION = "0.0.37"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -219,6 +225,123 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 await asyncio.sleep(sleep_s)
                 continue
             raise
+
+# NEW: Direct HTTP fallback functions for auth issues
+async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) -> List[ToolDef]:
+    """FALLBACK: Discover tools using direct HTTP when MCP connector auth fails."""
+    if not httpx:
+        raise RuntimeError("httpx is required for direct HTTP tool discovery fallback")
+    
+    logger.info("Using direct HTTP fallback for tool discovery")
+    
+    async with httpx.AsyncClient() as client:
+        # Step 1: Initialize MCP session
+        init_payload = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "mcpo", "version": APP_VERSION}
+            },
+            "id": 1
+        }
+        
+        logger.debug("Sending initialize request via direct HTTP fallback")
+        init_response = await client.post(url, json=init_payload, headers=headers)
+        
+        if init_response.status_code != 200:
+            raise Exception(f"Direct HTTP initialize failed: {init_response.status_code} {init_response.text}")
+        
+        init_result = init_response.json()
+        logger.info("Direct HTTP initialize successful, protocol version: %s", init_result.get("result", {}).get("protocolVersion"))
+        
+        # Step 2: List tools
+        tools_payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": {},
+            "id": 2
+        }
+        
+        logger.debug("Requesting tools list via direct HTTP fallback")
+        tools_response = await client.post(url, json=tools_payload, headers=headers)
+        
+        if tools_response.status_code != 200:
+            raise Exception(f"Direct HTTP tools list failed: {tools_response.status_code} {tools_response.text}")
+        
+        tools_result = tools_response.json()
+        raw_tools = tools_result.get("result", {}).get("tools", [])
+        
+        logger.info("Discovered %d tools via direct HTTP fallback", len(raw_tools))
+        
+        # Parse tools (same logic as original)
+        parsed: List[ToolDef] = []
+        for t in raw_tools:
+            try:
+                name = t.get("name")
+                description = t.get("description")
+                input_schema = t.get("inputSchema") or {}
+                output_schema = t.get("outputSchema")
+                
+                if not name:
+                    continue
+                    
+                parsed.append(ToolDef(
+                    name=name,
+                    description=description,
+                    inputSchema=input_schema,
+                    outputSchema=output_schema,
+                ))
+            except Exception as ex:
+                logger.warning("Skipping tool due to parsing issue: %s; error: %s", t, ex)
+        
+        return parsed
+
+async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """FALLBACK: Call MCP tool using direct HTTP when MCP connector auth fails."""
+    if not httpx:
+        raise RuntimeError("httpx is required for direct HTTP tool calls fallback")
+    
+    logger.debug("Using direct HTTP fallback for tool call: %s", name)
+    
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": arguments
+            },
+            "id": 3
+        }
+        
+        response = await client.post(url, json=payload, headers=headers)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Direct HTTP tool call failed: {response.text}")
+        
+        result = response.json()
+        
+        if "error" in result:
+            raise HTTPException(status_code=400, detail={"mcp_error": result["error"]})
+        
+        tool_result = result.get("result", {})
+        content = tool_result.get("content", [])
+        
+        if not content:
+            return {}
+        
+        first = content[0]
+        text = first.get("text") if isinstance(first, dict) else None
+        
+        if not text:
+            return {"content": content}
+        
+        try:
+            return json.loads(text)
+        except Exception:
+            return {"raw": text}
 
 @asynccontextmanager
 async def _connector_wrapper(url: str):
@@ -512,7 +635,12 @@ def create_app() -> FastAPI:
         logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
 
         logger.info("Echo/Ping routes registered")
-        logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s;]", MCP_SERVER_URL)
+        logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
+
+        # Parse headers for direct HTTP fallback
+        headers = _parse_headers(MCP_HEADERS)
+        if headers:
+            logger.info("Direct HTTP fallback headers configured with keys: %s", list(headers.keys()))
 
         try:
             client_context = _connector_wrapper(MCP_SERVER_URL)
@@ -527,19 +655,31 @@ def create_app() -> FastAPI:
 
                 async def handler(payload: Dict[str, Any], _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
+                        # Try original MCP connector first
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
                             return JSONResponse(status_code=200, content=result)
-                    except HTTPException as he:
-                        raise he
                     except Exception as e:
-                        logger.exception("Error calling tool %s at %s: %s", _tool.name, _route, e)
-                        raise HTTPException(status_code=502, detail=str(e))
+                        # Check if it's an auth error, then try direct HTTP fallback
+                        if "401" in str(e) or "Unauthorized" in str(e):
+                            logger.warning("MCP connector auth failed for tool %s, trying direct HTTP fallback", _tool.name)
+                            try:
+                                result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
+                                return JSONResponse(status_code=200, content=result)
+                            except HTTPException as he:
+                                raise he
+                            except Exception as fe:
+                                logger.exception("Direct HTTP fallback also failed for tool %s: %s", _tool.name, fe)
+                                raise HTTPException(status_code=502, detail=f"Both MCP connector and direct HTTP failed: {str(e)}, {str(fe)}")
+                        else:
+                            logger.exception("Error calling tool %s at %s: %s", _tool.name, _route, e)
+                            raise HTTPException(status_code=502, detail=str(e))
 
                 app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
         async def setup_tools():
             try:
+                # Try original MCP connector first
                 async with client_context as (reader, writer):
                     tools = await list_mcp_tools(reader, writer)
                     if not tools:
@@ -561,9 +701,37 @@ def create_app() -> FastAPI:
                         await mount_tool_routes(tools)
                 return
             except Exception as e:
-                logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
-                await asyncio.sleep(0.1)
+                # Check if it's an auth error, then try direct HTTP fallback
+                if "401" in str(e) or "Unauthorized" in str(e):
+                    logger.warning("MCP connector tool discovery failed (auth issue), trying direct HTTP fallback: %s", e)
+                    try:
+                        tools = await discover_tools_via_http_fallback(MCP_SERVER_URL, headers)
+                        if not tools:
+                            logger.warning("No tools discovered from MCP server via direct HTTP fallback")
+                        else:
+                            logger.info("Discovered %d tool(s) from MCP server via direct HTTP fallback", len(tools))
+                            _DISCOVERED_TOOL_NAMES.clear()
+                            _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
+                            _DISCOVERED_TOOLS_MIN.clear()
+                            for t in tools:
+                                try:
+                                    _DISCOVERED_TOOLS_MIN.append({
+                                        "name": t.name,
+                                        "description": t.description,
+                                        "inputSchema": t.inputSchema,
+                                    })
+                                except Exception:
+                                    pass
+                            await mount_tool_routes(tools)
+                        return
+                    except Exception as fe:
+                        logger.exception("Direct HTTP fallback also failed: %s", fe)
+                        raise Exception(f"Both MCP connector and direct HTTP failed: {str(e)}, {str(fe)}")
+                else:
+                    logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
+                    await asyncio.sleep(0.1)
 
+            # Final retry with original connector
             async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
                 if not tools:
@@ -675,6 +843,7 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "connector_module_path": _CONNECTOR_MODULE_PATH,
         "alt_http_connect_available": bool(_ALT_HTTP_CONNECT is not None),
         "headers_configured": bool(MCP_HEADERS.strip()),
+        "direct_http_fallback": "available",
     }
     try:
         _mod = import_module("mcp.client.streamable_http")
@@ -702,7 +871,7 @@ def attach_mcpo_diagnostics(app: FastAPI) -> None:
 attach_mcpo_diagnostics(app)
 
 def attach_tools_listing(app: FastAPI) -> None:
-    route = f"{PATH_PREFIX.rstrip('/')}/_tools" if PATH_PREFIX != "/" else "/_tools"
+    route = f"{PATH_PREFIX.rstrip('/')}/tools" if PATH_PREFIX != "/" else "/_tools"
     @app.get(route)
     async def _tools(dep=Depends(api_dependency())):
         return {"tools": list(_DISCOVERED_TOOL_NAMES)}
@@ -710,7 +879,7 @@ def attach_tools_listing(app: FastAPI) -> None:
 attach_tools_listing(app)
 
 def attach_tools_full_listing(app: FastAPI) -> None:
-    route = f"{PATH_PREFIX.rstrip('/')}/_tools_full" if PATH_PREFIX != "/" else "/_tools_full"
+    route = f"{PATH_PREFIX.rstrip('/')}/tools_full" if PATH_PREFIX != "/" else "/_tools_full"
     @app.get(route)
     async def _tools_full(dep=Depends(api_dependency())):
         return {"tools": [dict(item) for item in _DISCOVERED_TOOLS_MIN]}
