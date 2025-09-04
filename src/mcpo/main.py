@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.38 (conservative mcp-remote addition)
+Open WebUI MCPO - main.py v0.0.38.1 (conservative mcp-remote addition)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -37,8 +37,20 @@ from pydantic_core import ValidationError as PydValidationError
 from starlette.responses import JSONResponse
 
 from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioClientTransport
 from mcp.shared.exceptions import McpError
+
+# Try to import stdio transport - may not be available in all MCP versions
+try:
+    from mcp.client.stdio import StdioClientTransport
+    STDIO_AVAILABLE = True
+except ImportError:
+    try:
+        from mcp.client.stdio import StdioServerTransport as StdioClientTransport
+        STDIO_AVAILABLE = True
+    except ImportError:
+        STDIO_AVAILABLE = False
+        logger = logging.getLogger("mcpo")
+        logger.warning("StdioClientTransport not available - mcp-remote fallback disabled")
 
 def resolve_http_connector():
     mcp_version = None
@@ -124,7 +136,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.38"
+APP_VERSION = "0.0.38.1"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -357,6 +369,9 @@ class MCPRemoteManager:
         
     async def start(self, url: str, auth_token: str):
         """Start mcp-remote subprocess with HTTP authentication"""
+        if not STDIO_AVAILABLE:
+            raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
+            
         if not auth_token:
             raise RuntimeError("Auth token required for mcp-remote")
             
@@ -880,68 +895,72 @@ def create_app() -> FastAPI:
                     except Exception as fe:
                         logger.exception("Direct HTTP fallback also failed: %s", fe)
                         # NEW: Try mcp-remote as final fallback
-                        logger.warning("Trying mcp-remote as final fallback")
-                        try:
-                            # Extract auth token from headers
-                            auth_token = None
-                            if headers and "Authorization" in headers:
-                                auth_value = headers["Authorization"]
-                                if auth_value.startswith("Bearer "):
-                                    auth_token = auth_value.split(" ", 1)[1]
-                            
-                            if not auth_token:
-                                raise Exception("No auth token available for mcp-remote")
-                            
-                            # Create and start mcp-remote manager
-                            mcp_remote = MCPRemoteManager()
-                            await mcp_remote.start(MCP_SERVER_URL, auth_token)
-                            
-                            tools = await mcp_remote.list_tools()
-                            
-                            if not tools:
-                                logger.warning("No tools discovered from MCP server via mcp-remote fallback")
-                            else:
-                                logger.info("Discovered %d tool(s) from MCP server via mcp-remote fallback", len(tools))
-                                _DISCOVERED_TOOL_NAMES.clear()
-                                _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
-                                _DISCOVERED_TOOLS_MIN.clear()
-                                for t in tools:
-                                    try:
-                                        _DISCOVERED_TOOLS_MIN.append({
-                                            "name": t.name,
-                                            "description": t.description,
-                                            "inputSchema": t.inputSchema,
-                                        })
-                                    except Exception:
-                                        pass
-                                        
-                                # Create tool routes that use mcp-remote
-                                async def mount_mcp_remote_tool_routes(tools: List[ToolDef], mcp_remote: MCPRemoteManager):
-                                    for tool in tools:
-                                        route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
-                                        
-                                        async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
-                                            async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
-                                                try:
-                                                    result = await manager.call_tool(tool_name, payload or {})
-                                                    return JSONResponse(status_code=200, content=result)
-                                                except HTTPException:
-                                                    raise
-                                                except Exception as e:
-                                                    logger.exception("Error calling tool %s via mcp-remote: %s", tool_name, e)
-                                                    raise HTTPException(status_code=502, detail=str(e))
-                                            return handler
-                                        
-                                        handler = create_mcp_remote_handler(tool.name, mcp_remote)
-                                        app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
-                                        logger.info("Registered mcp-remote route: %s", route_path)
+                        if STDIO_AVAILABLE:
+                            logger.warning("Trying mcp-remote as final fallback")
+                            try:
+                                # Extract auth token from headers
+                                auth_token = None
+                                if headers and "Authorization" in headers:
+                                    auth_value = headers["Authorization"]
+                                    if auth_value.startswith("Bearer "):
+                                        auth_token = auth_value.split(" ", 1)[1]
                                 
-                                await mount_mcp_remote_tool_routes(tools, mcp_remote)
-                            return
+                                if not auth_token:
+                                    raise Exception("No auth token available for mcp-remote")
+                                
+                                # Create and start mcp-remote manager
+                                mcp_remote = MCPRemoteManager()
+                                await mcp_remote.start(MCP_SERVER_URL, auth_token)
+                                
+                                tools = await mcp_remote.list_tools()
+                                
+                                if not tools:
+                                    logger.warning("No tools discovered from MCP server via mcp-remote fallback")
+                                else:
+                                    logger.info("Discovered %d tool(s) from MCP server via mcp-remote fallback", len(tools))
+                                    _DISCOVERED_TOOL_NAMES.clear()
+                                    _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
+                                    _DISCOVERED_TOOLS_MIN.clear()
+                                    for t in tools:
+                                        try:
+                                            _DISCOVERED_TOOLS_MIN.append({
+                                                "name": t.name,
+                                                "description": t.description,
+                                                "inputSchema": t.inputSchema,
+                                            })
+                                        except Exception:
+                                            pass
+                                            
+                                    # Create tool routes that use mcp-remote
+                                    async def mount_mcp_remote_tool_routes(tools: List[ToolDef], mcp_remote: MCPRemoteManager):
+                                        for tool in tools:
+                                            route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
+                                            
+                                            async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
+                                                async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
+                                                    try:
+                                                        result = await manager.call_tool(tool_name, payload or {})
+                                                        return JSONResponse(status_code=200, content=result)
+                                                    except HTTPException:
+                                                        raise
+                                                    except Exception as e:
+                                                        logger.exception("Error calling tool %s via mcp-remote: %s", tool_name, e)
+                                                        raise HTTPException(status_code=502, detail=str(e))
+                                                return handler
+                                            
+                                            handler = create_mcp_remote_handler(tool.name, mcp_remote)
+                                            app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
+                                            logger.info("Registered mcp-remote route: %s", route_path)
+                                    
+                                    await mount_mcp_remote_tool_routes(tools, mcp_remote)
+                                return
+                            
+                            except Exception as mcp_remote_error:
+                                logger.exception("mcp-remote fallback also failed: %s", mcp_remote_error)
+                        else:
+                            logger.warning("StdioClientTransport not available - skipping mcp-remote fallback")
                         
-                        except Exception as mcp_remote_error:
-                            logger.exception("mcp-remote fallback also failed: %s", mcp_remote_error)
-                            raise Exception(f"All connection methods failed: {str(e)}, {str(fe)}, {str(mcp_remote_error)}")
+                        raise Exception(f"All connection methods failed: {str(e)}, {str(fe)}")
                 else:
                     logger.warning("Startup tool discovery failed (attempt 1): %s", e, exc_info=True)
                     await asyncio.sleep(0.1)
@@ -1059,7 +1078,7 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "alt_http_connect_available": bool(_ALT_HTTP_CONNECT is not None),
         "headers_configured": bool(MCP_HEADERS.strip()),
         "direct_http_fallback": "available",
-        "mcp_remote_fallback": "available",
+        "mcp_remote_fallback": "available" if STDIO_AVAILABLE else "disabled (StdioClientTransport not found)",
     }
     try:
         _mod = import_module("mcp.client.streamable_http")
