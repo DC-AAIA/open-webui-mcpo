@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.40.2 (FastAPI the body is optional Fix)
+Open WebUI MCPO - main.py v0.0.40.3 (Add a GET route for parameter-less tools alongside the existing POST)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
@@ -136,7 +136,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.40.2"
+APP_VERSION = "0.0.40.3"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -147,7 +147,7 @@ MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 
 def _parse_headers(hs: str) -> Dict[str, str]:
     """Parse header string into dict for httpx client.
-    
+
     Supports formats:
     - "Authorization: Bearer TOKEN"
     - "key1:value1,key2:value2"
@@ -155,23 +155,23 @@ def _parse_headers(hs: str) -> Dict[str, str]:
     """
     if not hs.strip():
         return {}
-    
+
     # Try JSON format first
     if hs.strip().startswith("{"):
         try:
             return json.loads(hs)
         except:
             pass
-    
+
     headers = {}
-    
+
     # Check for single Authorization header format
     if hs.startswith("Authorization:") or hs.startswith("authorization:"):
         parts = hs.split(":", 1)
         if len(parts) == 2:
             headers[parts[0].strip()] = parts[1].strip()
             return headers
-    
+
     # Try comma-separated format
     for part in hs.split(","):
         if not part.strip():
@@ -183,7 +183,7 @@ def _parse_headers(hs: str) -> Dict[str, str]:
         v = v.strip()
         if k:
             headers[k] = v
-    
+
     return headers
 
 logger = logging.getLogger("mcpo")
@@ -209,7 +209,7 @@ def api_dependency():
             raise HTTPException(status_code=401, detail="Unauthorized")
 
         return APIKeyHeader(api_key=key)
-    
+
     return _dep
 
 class ToolDef(BaseModel):
@@ -241,14 +241,14 @@ async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: in
                 continue
             raise
 
-# EXISTING: Direct HTTP fallback functions for auth issues
+# Direct HTTP fallback functions for auth issues
 async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) -> List[ToolDef]:
     """FALLBACK: Discover tools using direct HTTP when MCP connector auth fails."""
     if not httpx:
         raise RuntimeError("httpx is required for direct HTTP tool discovery fallback")
-    
+
     logger.info("Using direct HTTP fallback for tool discovery")
-    
+
     async with httpx.AsyncClient() as client:
         # Step 1: Initialize MCP session
         init_payload = {
@@ -261,16 +261,16 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
             },
             "id": 1
         }
-        
+
         logger.debug("Sending initialize request via direct HTTP fallback")
         init_response = await client.post(url, json=init_payload, headers=headers)
-        
+
         if init_response.status_code != 200:
             raise Exception(f"Direct HTTP initialize failed: {init_response.status_code} {init_response.text}")
-        
+
         init_result = init_response.json()
         logger.info("Direct HTTP initialize successful, protocol version: %s", init_result.get("result", {}).get("protocolVersion"))
-        
+
         # Step 2: List tools
         tools_payload = {
             "jsonrpc": "2.0",
@@ -278,19 +278,18 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
             "params": {},
             "id": 2
         }
-        
+
         logger.debug("Requesting tools list via direct HTTP fallback")
         tools_response = await client.post(url, json=tools_payload, headers=headers)
-        
+
         if tools_response.status_code != 200:
             raise Exception(f"Direct HTTP tools list failed: {tools_response.status_code} {tools_response.text}")
-        
+
         tools_result = tools_response.json()
         raw_tools = tools_result.get("result", {}).get("tools", [])
-        
+
         logger.info("Discovered %d tools via direct HTTP fallback", len(raw_tools))
-        
-        # Parse tools (same logic as original)
+
         parsed: List[ToolDef] = []
         for t in raw_tools:
             try:
@@ -298,10 +297,8 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
                 description = t.get("description")
                 input_schema = t.get("inputSchema") or {}
                 output_schema = t.get("outputSchema")
-                
                 if not name:
                     continue
-                    
                 parsed.append(ToolDef(
                     name=name,
                     description=description,
@@ -310,16 +307,16 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
                 ))
             except Exception as ex:
                 logger.warning("Skipping tool due to parsing issue: %s; error: %s", t, ex)
-        
+
         return parsed
 
 async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """FALLBACK: Call MCP tool using direct HTTP when MCP connector auth fails."""
     if not httpx:
         raise RuntimeError("httpx is required for direct HTTP tool calls fallback")
-    
+
     logger.debug("Using direct HTTP fallback for tool call: %s", name)
-    
+
     async with httpx.AsyncClient() as client:
         payload = {
             "jsonrpc": "2.0",
@@ -330,60 +327,58 @@ async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], nam
             },
             "id": 3
         }
-        
+
         response = await client.post(url, json=payload, headers=headers)
-        
+
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=f"Direct HTTP tool call failed: {response.text}")
-        
+
         result = response.json()
-        
+
         if "error" in result:
             raise HTTPException(status_code=400, detail={"mcp_error": result["error"]})
-        
+
         tool_result = result.get("result", {})
         content = tool_result.get("content", [])
-        
+
         if not content:
             return {}
-        
+
         first = content[0]
         text = first.get("text") if isinstance(first, dict) else None
-        
+
         if not text:
             return {"content": content}
-        
+
         try:
             return json.loads(text)
         except Exception:
             return {"raw": text}
 
-# NEW: mcp-remote manager for subprocess-based HTTP authentication
 class MCPRemoteManager:
     """Manages mcp-remote subprocess for HTTP authentication bridge"""
-    
     def __init__(self):
         self.process = None
         self.transport = None
         self.session = None
-        
+
     async def start(self, url: str, auth_token: str):
         """Start mcp-remote subprocess with HTTP authentication"""
         if not STDIO_AVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
-            
+
         if not auth_token:
             raise RuntimeError("Auth token required for mcp-remote")
-            
+
         # Build mcp-remote command with authentication
         cmd = [
             "npx", "-y", "mcp-remote",
             url,
             "--header", f"Authorization: Bearer {auth_token}"
         ]
-        
+
         logger.info("Starting mcp-remote subprocess")
-        
+
         # Start mcp-remote subprocess
         self.process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -391,21 +386,21 @@ class MCPRemoteManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        
+
         # Create stdio transport to communicate with mcp-remote
         self.transport = StdioClientTransport(
             self.process.stdout,
             self.process.stdin
         )
-        
+
         # Create MCP session
         self.session = ClientSession(self.transport)
-        
+
         # Initialize MCP connection
         await self.session.initialize()
-        
+
         logger.info("mcp-remote connection established successfully")
-        
+
     async def stop(self):
         """Stop mcp-remote subprocess"""
         if self.session:
@@ -413,7 +408,7 @@ class MCPRemoteManager:
                 await self.session.close()
             except Exception as e:
                 logger.warning("Error closing MCP session: %s", e)
-                
+
         if self.process:
             try:
                 self.process.terminate()
@@ -424,26 +419,25 @@ class MCPRemoteManager:
                 await self.process.wait()
             except Exception as e:
                 logger.warning("Error stopping mcp-remote process: %s", e)
-                
+
         self.process = None
         self.transport = None
         self.session = None
-        
+
     async def list_tools(self) -> List[ToolDef]:
         """List available tools via mcp-remote"""
         if not self.session:
             raise RuntimeError("MCP session not initialized")
-            
+
         try:
             tools_result = await self.session.list_tools()
-            
             if hasattr(tools_result, 'tools'):
                 raw_tools = tools_result.tools
             elif isinstance(tools_result, dict):
                 raw_tools = tools_result.get('tools', [])
             else:
                 raw_tools = []
-                
+
             parsed_tools = []
             for tool in raw_tools:
                 try:
@@ -455,7 +449,6 @@ class MCPRemoteManager:
                         name = tool.get('name')
                         description = tool.get('description')
                         input_schema = tool.get('inputSchema', {})
-                        
                     if name:
                         parsed_tools.append(ToolDef(
                             name=name,
@@ -464,32 +457,29 @@ class MCPRemoteManager:
                         ))
                 except Exception as e:
                     logger.warning("Failed to parse tool: %s, error: %s", tool, e)
-                    
             return parsed_tools
-            
+
         except Exception as e:
             logger.error("Failed to list tools via mcp-remote: %s", e)
             raise
-            
+
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call tool via mcp-remote"""
         if not self.session:
             raise RuntimeError("MCP session not initialized")
-            
+
         try:
             result = await self.session.call_tool(name, arguments)
-            
             if hasattr(result, 'content'):
                 content = result.content
             elif isinstance(result, dict):
                 content = result.get('content', [])
             else:
                 content = []
-                
+
             if not content:
                 return {}
-                
-            # Extract text from first content item
+
             first_item = content[0]
             if hasattr(first_item, 'text'):
                 text = first_item.text
@@ -497,16 +487,15 @@ class MCPRemoteManager:
                 text = first_item.get('text', '')
             else:
                 text = str(first_item)
-                
+
             if not text:
                 return {"content": content}
-                
-            # Try to parse as JSON
+
             try:
                 return json.loads(text)
             except Exception:
                 return {"raw": text}
-                
+
         except Exception as e:
             logger.error("Failed to call tool %s via mcp-remote: %s", name, e)
             raise HTTPException(status_code=502, detail=str(e))
@@ -525,11 +514,9 @@ async def _connector_wrapper(url: str):
         raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
     headers = _parse_headers(MCP_HEADERS)
-    
     if headers:
         logger.info("MCP_HEADERS configured with keys: %s", list(headers.keys()))
-    
-    # Create httpx client with headers
+
     client = httpx.AsyncClient(base_url=url, headers=headers)
     transport = _StreamableHTTPTransport(client)
 
@@ -632,7 +619,6 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
         logger.info("Negotiated protocol version: %s", proto)
 
         tools_result = await retry_jsonrpc(lambda: session.list_tools(), "tools/list", retries=1)
-
         raw_tools: List[Dict[str, Any]] = []
         if isinstance(tools_result, dict):
             raw_tools = tools_result.get("tools", [])
@@ -719,8 +705,6 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
                 pass
             raise HTTPException(status_code=400, detail=detail)
         except RuntimeError as re:
-            # Tolerate MCP backends that return non-structured content or raise runtime result errors
-            # Surface as a raw payload so the caller can see the underlying message
             return {"raw_error": str(re)}
         except PydValidationError as e:
             raise HTTPException(status_code=502, detail={"validation_error": str(e)})
@@ -805,7 +789,6 @@ def create_app() -> FastAPI:
         logger.info("Echo/Ping routes registered")
         logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
 
-        # Parse headers for direct HTTP fallback
         headers = _parse_headers(MCP_HEADERS)
         if headers:
             logger.info("Direct HTTP fallback headers configured with keys: %s", list(headers.keys()))
@@ -823,16 +806,12 @@ def create_app() -> FastAPI:
 
                 async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                     try:
-                        # CONSERVATIVE FIX: Handle missing request body for Open WebUI compatibility
                         if payload is None:
                             logger.info("No request body provided - using empty dict for Open WebUI compatibility")
                             payload = {}
-                        
-                        # Try direct HTTP first (proven working method)
                         result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
                         return JSONResponse(status_code=200, content=result)
                     except Exception as e:
-                        # Fall back to original MCP connector
                         logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
                         try:
                             async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
@@ -846,9 +825,38 @@ def create_app() -> FastAPI:
 
                 app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
+                input_schema = tool.inputSchema or {}
+                if not input_schema.get('properties') and not input_schema.get('required'):
+                    async def get_handler(_tool=tool, dep=Depends(api_dependency())):
+                        try:
+                            result = await call_mcp_tool_via_http_fallback(
+                                MCP_SERVER_URL, headers, _tool.name, {}
+                            )
+                            return JSONResponse(status_code=200, content=result)
+                        except Exception as e:
+                            logger.warning(
+                                "Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e
+                            )
+                            try:
+                                async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
+                                    result = await call_mcp_tool(reader, writer, _tool.name, {})
+                                    return JSONResponse(status_code=200, content=result)
+                            except HTTPException as he:
+                                raise he
+                            except Exception as fe:
+                                logger.exception(
+                                    "Both direct HTTP and MCP connector failed for tool %s: %s, %s",
+                                    _tool.name, e, fe
+                                )
+                                raise HTTPException(
+                                    status_code=502,
+                                    detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}"
+                                )
+                    app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
+                    logger.info("Added GET route for parameter-less tool: %s", route_path)
+
         async def setup_tools():
             try:
-                # CONSERVATIVE CHANGE: Try direct HTTP FIRST (proven working method)
                 logger.info("Trying direct HTTP method first (proven working with authentication)")
                 tools = await discover_tools_via_http_fallback(MCP_SERVER_URL, headers)
                 if not tools:
@@ -871,8 +879,6 @@ def create_app() -> FastAPI:
                 return
             except Exception as e:
                 logger.warning("Direct HTTP tool discovery failed, trying original MCP connector: %s", e)
-                
-                # Fall back to original MCP connector
                 try:
                     async with client_context as (reader, writer):
                         tools = await list_mcp_tools(reader, writer)
@@ -896,26 +902,19 @@ def create_app() -> FastAPI:
                     return
                 except Exception as fe:
                     logger.exception("MCP connector also failed: %s", fe)
-                    # Try mcp-remote as final fallback
                     if STDIO_AVAILABLE:
                         logger.warning("Trying mcp-remote as final fallback")
                         try:
-                            # Extract auth token from headers
                             auth_token = None
                             if headers and "Authorization" in headers:
                                 auth_value = headers["Authorization"]
                                 if auth_value.startswith("Bearer "):
                                     auth_token = auth_value.split(" ", 1)[1]
-                            
                             if not auth_token:
                                 raise Exception("No auth token available for mcp-remote")
-                            
-                            # Create and start mcp-remote manager
                             mcp_remote = MCPRemoteManager()
                             await mcp_remote.start(MCP_SERVER_URL, auth_token)
-                            
                             tools = await mcp_remote.list_tools()
-                            
                             if not tools:
                                 logger.warning("No tools discovered from MCP server via mcp-remote fallback")
                             else:
@@ -932,12 +931,10 @@ def create_app() -> FastAPI:
                                         })
                                     except Exception:
                                         pass
-                                        
-                                # Create tool routes that use mcp-remote
+
                                 async def mount_mcp_remote_tool_routes(tools: List[ToolDef], mcp_remote: MCPRemoteManager):
                                     for tool in tools:
                                         route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
-                                        
                                         async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
                                             async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
                                                 try:
@@ -949,19 +946,16 @@ def create_app() -> FastAPI:
                                                     logger.exception("Error calling tool %s via mcp-remote: %s", tool_name, e)
                                                     raise HTTPException(status_code=502, detail=str(e))
                                             return handler
-                                        
                                         handler = create_mcp_remote_handler(tool.name, mcp_remote)
                                         app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
                                         logger.info("Registered mcp-remote route: %s", route_path)
-                                
                                 await mount_mcp_remote_tool_routes(tools, mcp_remote)
                             return
-                        
+
                         except Exception as mcp_remote_error:
                             logger.exception("mcp-remote fallback also failed: %s", mcp_remote_error)
                     else:
                         logger.warning("StdioClientTransport not available - skipping mcp-remote fallback")
-                    
                     raise Exception(f"All connection methods failed: {str(e)}, {str(fe)}")
 
         try:
@@ -982,7 +976,7 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
-# --- Minimal OpenAPI augmentation for OWUI tool mapping (added) ---
+
 from fastapi.openapi.utils import get_openapi
 
 def custom_openapi():
@@ -996,7 +990,6 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # 1) Security scheme for x-api-key
     components = schema.setdefault("components", {})
     sec = components.setdefault("securitySchemes", {})
     sec["apiKeyAuth"] = {
@@ -1005,7 +998,6 @@ def custom_openapi():
         "name": "x-api-key",
     }
 
-    # 2) Ensure POST /tools/time is advertised and secured
     paths = schema.setdefault("paths", {})
     post_tools_time = paths.setdefault("/tools/time", {}).setdefault("post", {})
     post_tools_time.update({
@@ -1038,15 +1030,12 @@ def custom_openapi():
         "tags": ["tools"],
     })
 
-    # Optional default security
     schema["security"] = [{"apiKeyAuth": []}]
 
     app.openapi_schema = schema
     return app.openapi_schema
 
-# Bind the custom OpenAPI generator
 app.openapi = custom_openapi
-# --- End minimal OpenAPI augmentation ---
 
 def _collect_connector_diagnostics() -> Dict[str, Any]:
     info = {
