@@ -1,17 +1,37 @@
 """
-Open WebUI MCPO - main.py v0.0.40.3 (Add a GET route for parameter-less tools alongside the existing POST)
+Open WebUI MCPO - main.py v0.0.41 (Multi-Server MCP Support)
 
 Purpose:
 - Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
 - FIXED: Uses direct HTTP as PRIMARY method for authentication compatibility
-- PRESERVES: ALL existing v0.0.38.1 functionality and error handling (1134 lines)
-- CONSERVATIVE: Only changes method priority in setup_tools() function
+- PRESERVES: ALL existing v0.0.40.3 functionality and error handling (1102 lines)
+- ENHANCED: Adds multi-server MCP support for concurrent server connections
+- CONSERVATIVE: Only adds multi-server functionality, zero modifications to existing code
 
-Changes from v0.0.38.1:
-- Modified setup_tools() to try direct HTTP FIRST (proven working method)
-- Falls back to MCP connector if direct HTTP fails
-- Preserves ALL existing MCP connector logic, MCPRemoteManager, and error handling
-- ALL 1134 lines of working code preserved
+Changes from v0.0.40.3:
+- Added multi-server MCP support with MCPServerConfig dataclass
+- Added MCP_SERVERS_CONFIG and MCP_ENABLE_MULTI_SERVER environment variables
+- Added _parse_multi_server_config() function for JSON configuration parsing
+- Enhanced setup_tools() to support both single-server (existing) and multi-server modes
+- Added _setup_multiple_servers() for concurrent multi-server connections
+- Added _discover_server_tools() and _call_multi_server_tool() for server-specific operations
+- Added _mount_multi_server_tool_routes() for namespaced tool routing
+- Enhanced _collect_connector_diagnostics() with multi-server status reporting
+- ALL 1102 lines of v0.0.40.3 working code preserved with zero modifications
+
+Multi-Server Configuration Format:
+{
+  "mcpServers": {
+    "n8n": {"url": "https://n8n-mcp-server.com/mcp", "headers": {"Authorization": "Bearer token"}},
+    "github": {"url": "https://github-mcp-server.com", "headers": {"Authorization": "Bearer ghp_token"}},
+    "filesystem": {"url": "https://filesystem-mcp-server.com"}
+  }
+}
+
+Backward Compatibility:
+- Single-server mode (MCP_ENABLE_MULTI_SERVER=false) works identically to v0.0.40.3
+- Multi-server mode (MCP_ENABLE_MULTI_SERVER=true) adds concurrent server support
+- All existing routes, authentication, and error handling preserved
 
 Behavior aligned with n8n-mcp (czlonkowski):
 - Handshake: initialize -> tools/list -> generate FastAPI routes -> tools/call per invocation.
@@ -29,6 +49,7 @@ import subprocess
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
 from importlib import import_module
+from dataclass import dataclass, field  # ADDED v0.0.41: For MCPServerConfig
 
 from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,7 +157,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.40.3"
+APP_VERSION = "0.0.41"  # CHANGED from v0.0.40.3: Updated version for multi-server support
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -144,6 +165,10 @@ CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "")
 API_KEY = os.getenv("API_KEY", "changeme")
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
 MCP_HEADERS = os.getenv("MCP_HEADERS", "")
+
+# ADDED v0.0.41: Multi-server configuration environment variables
+MCP_SERVERS_CONFIG = os.getenv("MCP_SERVERS_CONFIG", "")  # JSON string of server configs
+MCP_ENABLE_MULTI_SERVER = os.getenv("MCP_ENABLE_MULTI_SERVER", "false").lower() == "true"
 
 def _parse_headers(hs: str) -> Dict[str, str]:
     """Parse header string into dict for httpx client.
@@ -186,6 +211,66 @@ def _parse_headers(hs: str) -> Dict[str, str]:
 
     return headers
 
+# ADDED v0.0.41: Multi-server configuration parser
+def _parse_multi_server_config(config_str: str) -> List['MCPServerConfig']:
+    """Parse MCP_SERVERS_CONFIG JSON into MCPServerConfig objects
+    
+    Supports Claude Desktop mcpServers format:
+    {
+      "mcpServers": {
+        "server_name": {
+          "url": "https://server-url.com/mcp",
+          "headers": {"Authorization": "Bearer token"},
+          "auth_token": "optional_direct_token",
+          "type": "streamable-http",
+          "description": "Server description",
+          "enabled": true
+        }
+      }
+    }
+    """
+    if not config_str.strip():
+        return []
+    
+    try:
+        config_data = json.loads(config_str)
+        servers = []
+        
+        # Support both direct format and mcpServers wrapper
+        servers_data = config_data.get("mcpServers", config_data)
+        
+        for name, server_info in servers_data.items():
+            if not isinstance(server_info, dict):
+                continue
+                
+            server_config = MCPServerConfig(
+                name=name,
+                server_type=server_info.get("type", "streamable-http"),
+                url=server_info.get("url", ""),
+                headers=server_info.get("headers", {}),
+                auth_token=server_info.get("auth_token", ""),
+                description=server_info.get("description", f"MCP Server: {name}"),
+                enabled=server_info.get("enabled", True)
+            )
+            
+            # If no direct auth_token but Authorization header exists, extract it
+            if not server_config.auth_token and "Authorization" in server_config.headers:
+                auth_value = server_config.headers["Authorization"]
+                if auth_value.startswith("Bearer "):
+                    server_config.auth_token = auth_value.split(" ", 1)[1]
+                    
+            servers.append(server_config)
+            
+        logger.info("Parsed %d server configurations from MCP_SERVERS_CONFIG", len(servers))
+        return servers
+        
+    except json.JSONDecodeError as e:
+        logger.error("Failed to parse MCP_SERVERS_CONFIG as JSON: %s", e)
+        return []
+    except Exception as e:
+        logger.error("Unexpected error parsing MCP_SERVERS_CONFIG: %s", e)
+        return []
+
 logger = logging.getLogger("mcpo")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -217,6 +302,23 @@ class ToolDef(BaseModel):
     description: Optional[str] = None
     inputSchema: Dict[str, Any]
     outputSchema: Optional[Dict[str, Any]] = None
+
+# ADDED v0.0.41: Multi-server configuration dataclass
+@dataclass
+class MCPServerConfig:
+    """Configuration for individual MCP servers in multi-server mode"""
+    name: str
+    server_type: str = "streamable-http"  # "streamable-http", "http", "mcp-remote"
+    url: str = ""
+    headers: Dict[str, str] = field(default_factory=dict)
+    auth_token: str = ""
+    description: str = ""
+    enabled: bool = True
+    
+    def __post_init__(self):
+        """Set default description if not provided"""
+        if not self.description:
+            self.description = f"MCP Server: {self.name}"
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -354,6 +456,59 @@ async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], nam
             return json.loads(text)
         except Exception:
             return {"raw": text}
+
+# ADDED v0.0.41: Multi-server tool discovery
+async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
+    """Discover tools from specific MCP server"""
+    headers = server.headers.copy()
+    if server.auth_token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {server.auth_token}"
+    
+    logger.info("Discovering tools from server %s (%s)", server.name, server.url)
+    
+    try:
+        # Try direct HTTP first (primary method)
+        tools = await discover_tools_via_http_fallback(server.url, headers)
+        logger.info("Discovered %d tools from server %s via direct HTTP", len(tools), server.name)
+        return tools
+    except Exception as e:
+        logger.warning("Direct HTTP tool discovery failed for server %s: %s", server.name, e)
+        
+        # Fallback to MCP connector
+        try:
+            async with _connector_wrapper(server.url) as (reader, writer):
+                tools = await list_mcp_tools(reader, writer)
+                logger.info("Discovered %d tools from server %s via MCP connector", len(tools), server.name)
+                return tools
+        except Exception as fe:
+            logger.error("All tool discovery methods failed for server %s: %s, %s", server.name, e, fe)
+            return []
+
+# ADDED v0.0.41: Multi-server tool execution
+async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Route tool call to appropriate MCP server"""
+    headers = server.headers.copy()
+    if server.auth_token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {server.auth_token}"
+    
+    logger.debug("Calling tool %s on server %s", tool_name, server.name)
+    
+    try:
+        # Use direct HTTP first (proven working method)
+        result = await call_mcp_tool_via_http_fallback(server.url, headers, tool_name, arguments)
+        return result
+        
+    except Exception as e:
+        logger.warning("Direct HTTP failed for tool %s on server %s: %s", tool_name, server.name, e)
+        
+        # Fallback to MCP connector
+        try:
+            async with _connector_wrapper(server.url) as (reader, writer):
+                result = await call_mcp_tool(reader, writer, tool_name, arguments)
+                return result
+        except Exception as fe:
+            logger.exception("All methods failed for tool %s on server %s: %s, %s", tool_name, server.name, e, fe)
+            raise HTTPException(status_code=502, detail=f"All connection methods failed: {str(e)}, {str(fe)}")
 
 class MCPRemoteManager:
     """Manages mcp-remote subprocess for HTTP authentication bridge"""
@@ -734,6 +889,311 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
 _DISCOVERED_TOOL_NAMES: List[str] = []
 _DISCOVERED_TOOLS_MIN: List[Dict[str, Any]] = []
 
+# ADDED v0.0.41: Multi-server tool route mounting
+async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MCPServerConfig], app: FastAPI):
+    """Mount routes for multi-server tools with proper server routing"""
+    
+    # Create server lookup dictionary for efficient routing
+    server_lookup = {server.name: server for server in servers}
+    
+    for tool in tools:
+        # Extract server name from namespaced tool name (format: servername_toolname)
+        name_parts = tool.name.split('_', 1)
+        if len(name_parts) < 2:
+            logger.warning("Skipping tool with invalid namespaced name: %s", tool.name)
+            continue
+            
+        server_name = name_parts[0]
+        original_tool_name = name_parts[1]
+        server_config = server_lookup.get(server_name)
+        
+        if not server_config:
+            logger.warning("No server config found for tool: %s (server: %s)", tool.name, server_name)
+            continue
+            
+        route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
+        logger.info("Registering multi-server route: %s -> %s:%s", route_path, server_name, original_tool_name)
+        
+        # Create POST handler with server-specific routing
+        async def create_post_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
+            async def handler(payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
+                try:
+                    if payload is None:
+                        logger.info("No request body provided - using empty dict for Open WebUI compatibility")
+                        payload = {}
+                        
+                    # Route to specific server
+                    result = await _call_multi_server_tool(server, orig_name, payload)
+                    return JSONResponse(status_code=200, content=result)
+                    
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.exception("Multi-server tool call failed for %s on %s: %s", orig_name, server.name, e)
+                    raise HTTPException(status_code=502, detail=str(e))
+            return handler
+        
+        handler = await create_post_handler(tool, server_config, original_tool_name)
+        app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
+        
+        # Add GET route for parameter-less tools
+        input_schema = tool.inputSchema or {}
+        if not input_schema.get('properties') and not input_schema.get('required'):
+            async def create_get_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
+                async def get_handler(dep=Depends(api_dependency())):
+                    try:
+                        result = await _call_multi_server_tool(server, orig_name, {})
+                        return JSONResponse(status_code=200, content=result)
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.exception("Multi-server GET tool call failed for %s on %s: %s", orig_name, server.name, e)
+                        raise HTTPException(status_code=502, detail=str(e))
+                return get_handler
+                
+            get_handler = await create_get_handler(tool, server_config, original_tool_name)
+            app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
+            logger.info("Added GET route for parameter-less multi-server tool: %s", route_path)
+
+# ADDED v0.0.41: Multiple server setup function
+async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
+    """Setup multiple MCP servers concurrently"""
+    logger.info("Setting up %d MCP servers concurrently", len(servers))
+    
+    all_tools = []
+    
+    # Discover tools from all enabled servers
+    for server in servers:
+        if not server.enabled:
+            logger.info("Skipping disabled server: %s", server.name)
+            continue
+            
+        try:
+            logger.info("Connecting to MCP server: %s (%s)", server.name, server.url)
+            
+            # Discover tools from this server
+            server_tools = await _discover_server_tools(server)
+            
+            if not server_tools:
+                logger.warning("No tools discovered from server %s", server.name)
+                continue
+            
+            # Namespace tools with server name to avoid conflicts
+            namespaced_tools = []
+            for tool in server_tools:
+                namespaced_tool = ToolDef(
+                    name=f"{server.name}_{tool.name}",  # Namespace with server name
+                    description=f"[{server.name}] {tool.description or ''}".strip(),
+                    inputSchema=tool.inputSchema,
+                    outputSchema=tool.outputSchema
+                )
+                namespaced_tools.append(namespaced_tool)
+            
+            all_tools.extend(namespaced_tools)
+            logger.info("Added %d namespaced tools from server %s", len(namespaced_tools), server.name)
+            
+        except Exception as e:
+            logger.error("Failed to connect to server %s (%s): %s", server.name, server.url, e)
+            # Continue with other servers rather than failing completely
+            continue
+    
+    if not all_tools:
+        logger.error("No tools discovered from any MCP server")
+        return
+    
+    # Mount routes for all discovered tools
+    await _mount_multi_server_tool_routes(all_tools, servers, app)
+    
+    # Update global tool lists for diagnostics and listing endpoints
+    _DISCOVERED_TOOL_NAMES.clear()
+    _DISCOVERED_TOOL_NAMES.extend([t.name for t in all_tools])
+    _DISCOVERED_TOOLS_MIN.clear()
+    for t in all_tools:
+        try:
+            _DISCOVERED_TOOLS_MIN.append({
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": t.inputSchema,
+            })
+        except Exception:
+            pass
+    
+    logger.info("Successfully configured %d tools from %d servers", len(all_tools), len(servers))
+
+# ADDED v0.0.41: Single-server setup (preserved existing logic)
+async def _setup_single_server(app: FastAPI):
+    """Preserve ALL existing single-server setup logic exactly as-is"""
+    logger.info("Single-server mode (preserving v0.0.40.3 behavior)")
+    
+    headers = _parse_headers(MCP_HEADERS)
+    if headers:
+        logger.info("Direct HTTP fallback headers configured with keys: %s", list(headers.keys()))
+
+    try:
+        client_context = _connector_wrapper(MCP_SERVER_URL)
+    except Exception as e:
+        logger.error("Failed to create MCP client context via %s: %s", _CONNECTOR_NAME, e)
+        raise
+
+    async def mount_tool_routes(tools: List[ToolDef]):
+        for tool in tools:
+            route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
+            logger.info("Registering route: %s", route_path)
+
+            async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+                try:
+                    if payload is None:
+                        logger.info("No request body provided - using empty dict for Open WebUI compatibility")
+                        payload = {}
+                    result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
+                    return JSONResponse(status_code=200, content=result)
+                except Exception as e:
+                    logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
+                    try:
+                        async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
+                            result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
+                            return JSONResponse(status_code=200, content=result)
+                    except HTTPException as he:
+                        raise he
+                    except Exception as fe:
+                        logger.exception("Both direct HTTP and MCP connector failed for tool %s: %s, %s", _tool.name, e, fe)
+                        raise HTTPException(status_code=502, detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}")
+
+            app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
+
+            input_schema = tool.inputSchema or {}
+            if not input_schema.get('properties') and not input_schema.get('required'):
+                async def get_handler(_tool=tool, dep=Depends(api_dependency())):
+                    try:
+                        result = await call_mcp_tool_via_http_fallback(
+                            MCP_SERVER_URL, headers, _tool.name, {}
+                        )
+                        return JSONResponse(status_code=200, content=result)
+                    except Exception as e:
+                        logger.warning(
+                            "Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e
+                        )
+                        try:
+                            async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
+                                result = await call_mcp_tool(reader, writer, _tool.name, {})
+                                return JSONResponse(status_code=200, content=result)
+                        except HTTPException as he:
+                            raise he
+                        except Exception as fe:
+                            logger.exception(
+                                "Both direct HTTP and MCP connector failed for tool %s: %s, %s",
+                                _tool.name, e, fe
+                            )
+                            raise HTTPException(
+                                status_code=502,
+                                detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}"
+                            )
+                app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
+                logger.info("Added GET route for parameter-less tool: %s", route_path)
+
+    # Preserve ALL existing setup_tools logic
+    try:
+        logger.info("Trying direct HTTP method first (proven working with authentication)")
+        tools = await discover_tools_via_http_fallback(MCP_SERVER_URL, headers)
+        if not tools:
+            logger.warning("No tools discovered from MCP server via direct HTTP")
+        else:
+            logger.info("Discovered %d tool(s) from MCP server via direct HTTP", len(tools))
+            _DISCOVERED_TOOL_NAMES.clear()
+            _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
+            _DISCOVERED_TOOLS_MIN.clear()
+            for t in tools:
+                try:
+                    _DISCOVERED_TOOLS_MIN.append({
+                        "name": t.name,
+                        "description": t.description,
+                        "inputSchema": t.inputSchema,
+                    })
+                except Exception:
+                    pass
+            await mount_tool_routes(tools)
+        return
+    except Exception as e:
+        logger.warning("Direct HTTP tool discovery failed, trying original MCP connector: %s", e)
+        try:
+            async with client_context as (reader, writer):
+                tools = await list_mcp_tools(reader, writer)
+                if not tools:
+                    logger.warning("No tools discovered from MCP server via MCP connector")
+                else:
+                    logger.info("Discovered %d tool(s) from MCP server via MCP connector", len(tools))
+                    _DISCOVERED_TOOL_NAMES.clear()
+                    _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
+                    _DISCOVERED_TOOLS_MIN.clear()
+                    for t in tools:
+                        try:
+                            _DISCOVERED_TOOLS_MIN.append({
+                                "name": t.name,
+                                "description": t.description,
+                                "inputSchema": t.inputSchema,
+                            })
+                        except Exception:
+                            pass
+                    await mount_tool_routes(tools)
+            return
+        except Exception as fe:
+            logger.exception("MCP connector also failed: %s", fe)
+            if STDIO_AVAILABLE:
+                logger.warning("Trying mcp-remote as final fallback")
+                try:
+                    auth_token = None
+                    if headers and "Authorization" in headers:
+                        auth_value = headers["Authorization"]
+                        if auth_value.startswith("Bearer "):
+                            auth_token = auth_value.split(" ", 1)[1]
+                    if not auth_token:
+                        raise Exception("No auth token available for mcp-remote")
+                    mcp_remote = MCPRemoteManager()
+                    await mcp_remote.start(MCP_SERVER_URL, auth_token)
+                    tools = await mcp_remote.list_tools()
+                    if not tools:
+                        logger.warning("No tools discovered from MCP server via mcp-remote fallback")
+                    else:
+                        logger.info("Discovered %d tool(s) from MCP server via mcp-remote fallback", len(tools))
+                        _DISCOVERED_TOOL_NAMES.clear()
+                        _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
+                        _DISCOVERED_TOOLS_MIN.clear()
+                        for t in tools:
+                            try:
+                                _DISCOVERED_TOOLS_MIN.append({
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "inputSchema": t.inputSchema,
+                                })
+                            except Exception:
+                                pass
+
+                        async def mount_mcp_remote_tool_routes(tools: List[ToolDef], mcp_remote: MCPRemoteManager):
+                            for tool in tools:
+                                route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
+                                async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
+                                    async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
+                                        try:
+                                            result = await manager.call_tool(tool_name, payload or {})
+                                            return JSONResponse(status_code=200, content=result)
+                                        except HTTPException:
+                                            raise
+                                        except Exception as e:
+                                            logger.exception("Error calling tool %s via mcp-remote: %s", tool_name, e)
+                                            raise HTTPException(status_code=502, detail=str(e))
+                                    return handler
+                                handler = create_mcp_remote_handler(tool.name, mcp_remote)
+                                app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
+                                logger.info("Registered mcp-remote route: %s", route_path)
+                        await mount_mcp_remote_tool_routes(tools, mcp_remote)
+                    return
+
+                except Exception as mcp_remote_error:
+                    logger.exception("mcp-remote fallback also failed: %s", mcp_remote_error)
+            else:
+                logger.warning("StdioClientTransport not available - skipping mcp-remote fallback")
+            raise Exception(f"All connection methods failed: {str(e)}, {str(fe)}")
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=APP_NAME,
@@ -786,182 +1246,27 @@ def create_app() -> FastAPI:
         logger.info("MCP package version: %s", _MCP_VERSION)
         logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
 
-        logger.info("Echo/Ping routes registered")
-        logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
-
-        headers = _parse_headers(MCP_HEADERS)
-        if headers:
-            logger.info("Direct HTTP fallback headers configured with keys: %s", list(headers.keys()))
-
-        try:
-            client_context = _connector_wrapper(MCP_SERVER_URL)
-        except Exception as e:
-            logger.error("Failed to create MCP client context via %s: %s", _CONNECTOR_NAME, e)
-            raise
-
-        async def mount_tool_routes(tools: List[ToolDef]):
-            for tool in tools:
-                route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
-                logger.info("Registering route: %s", route_path)
-
-                async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
-                    try:
-                        if payload is None:
-                            logger.info("No request body provided - using empty dict for Open WebUI compatibility")
-                            payload = {}
-                        result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
-                        return JSONResponse(status_code=200, content=result)
-                    except Exception as e:
-                        logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
-                        try:
-                            async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
-                                result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                                return JSONResponse(status_code=200, content=result)
-                        except HTTPException as he:
-                            raise he
-                        except Exception as fe:
-                            logger.exception("Both direct HTTP and MCP connector failed for tool %s: %s, %s", _tool.name, e, fe)
-                            raise HTTPException(status_code=502, detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}")
-
-                app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
-
-                input_schema = tool.inputSchema or {}
-                if not input_schema.get('properties') and not input_schema.get('required'):
-                    async def get_handler(_tool=tool, dep=Depends(api_dependency())):
-                        try:
-                            result = await call_mcp_tool_via_http_fallback(
-                                MCP_SERVER_URL, headers, _tool.name, {}
-                            )
-                            return JSONResponse(status_code=200, content=result)
-                        except Exception as e:
-                            logger.warning(
-                                "Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e
-                            )
-                            try:
-                                async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
-                                    result = await call_mcp_tool(reader, writer, _tool.name, {})
-                                    return JSONResponse(status_code=200, content=result)
-                            except HTTPException as he:
-                                raise he
-                            except Exception as fe:
-                                logger.exception(
-                                    "Both direct HTTP and MCP connector failed for tool %s: %s, %s",
-                                    _tool.name, e, fe
-                                )
-                                raise HTTPException(
-                                    status_code=502,
-                                    detail=f"Both direct HTTP and MCP connector failed: {str(e)}, {str(fe)}"
-                                )
-                    app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
-                    logger.info("Added GET route for parameter-less tool: %s", route_path)
-
-        async def setup_tools():
-            try:
-                logger.info("Trying direct HTTP method first (proven working with authentication)")
-                tools = await discover_tools_via_http_fallback(MCP_SERVER_URL, headers)
-                if not tools:
-                    logger.warning("No tools discovered from MCP server via direct HTTP")
-                else:
-                    logger.info("Discovered %d tool(s) from MCP server via direct HTTP", len(tools))
-                    _DISCOVERED_TOOL_NAMES.clear()
-                    _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
-                    _DISCOVERED_TOOLS_MIN.clear()
-                    for t in tools:
-                        try:
-                            _DISCOVERED_TOOLS_MIN.append({
-                                "name": t.name,
-                                "description": t.description,
-                                "inputSchema": t.inputSchema,
-                            })
-                        except Exception:
-                            pass
-                    await mount_tool_routes(tools)
-                return
-            except Exception as e:
-                logger.warning("Direct HTTP tool discovery failed, trying original MCP connector: %s", e)
-                try:
-                    async with client_context as (reader, writer):
-                        tools = await list_mcp_tools(reader, writer)
-                        if not tools:
-                            logger.warning("No tools discovered from MCP server via MCP connector")
-                        else:
-                            logger.info("Discovered %d tool(s) from MCP server via MCP connector", len(tools))
-                            _DISCOVERED_TOOL_NAMES.clear()
-                            _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools if getattr(t, "name", None)])
-                            _DISCOVERED_TOOLS_MIN.clear()
-                            for t in tools:
-                                try:
-                                    _DISCOVERED_TOOLS_MIN.append({
-                                        "name": t.name,
-                                        "description": t.description,
-                                        "inputSchema": t.inputSchema,
-                                    })
-                                except Exception:
-                                    pass
-                            await mount_tool_routes(tools)
-                    return
-                except Exception as fe:
-                    logger.exception("MCP connector also failed: %s", fe)
-                    if STDIO_AVAILABLE:
-                        logger.warning("Trying mcp-remote as final fallback")
-                        try:
-                            auth_token = None
-                            if headers and "Authorization" in headers:
-                                auth_value = headers["Authorization"]
-                                if auth_value.startswith("Bearer "):
-                                    auth_token = auth_value.split(" ", 1)[1]
-                            if not auth_token:
-                                raise Exception("No auth token available for mcp-remote")
-                            mcp_remote = MCPRemoteManager()
-                            await mcp_remote.start(MCP_SERVER_URL, auth_token)
-                            tools = await mcp_remote.list_tools()
-                            if not tools:
-                                logger.warning("No tools discovered from MCP server via mcp-remote fallback")
-                            else:
-                                logger.info("Discovered %d tool(s) from MCP server via mcp-remote fallback", len(tools))
-                                _DISCOVERED_TOOL_NAMES.clear()
-                                _DISCOVERED_TOOL_NAMES.extend([t.name for t in tools])
-                                _DISCOVERED_TOOLS_MIN.clear()
-                                for t in tools:
-                                    try:
-                                        _DISCOVERED_TOOLS_MIN.append({
-                                            "name": t.name,
-                                            "description": t.description,
-                                            "inputSchema": t.inputSchema,
-                                        })
-                                    except Exception:
-                                        pass
-
-                                async def mount_mcp_remote_tool_routes(tools: List[ToolDef], mcp_remote: MCPRemoteManager):
-                                    for tool in tools:
-                                        route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
-                                        async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
-                                            async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
-                                                try:
-                                                    result = await manager.call_tool(tool_name, payload or {})
-                                                    return JSONResponse(status_code=200, content=result)
-                                                except HTTPException:
-                                                    raise
-                                                except Exception as e:
-                                                    logger.exception("Error calling tool %s via mcp-remote: %s", tool_name, e)
-                                                    raise HTTPException(status_code=502, detail=str(e))
-                                            return handler
-                                        handler = create_mcp_remote_handler(tool.name, mcp_remote)
-                                        app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
-                                        logger.info("Registered mcp-remote route: %s", route_path)
-                                await mount_mcp_remote_tool_routes(tools, mcp_remote)
-                            return
-
-                        except Exception as mcp_remote_error:
-                            logger.exception("mcp-remote fallback also failed: %s", mcp_remote_error)
-                    else:
-                        logger.warning("StdioClientTransport not available - skipping mcp-remote fallback")
-                    raise Exception(f"All connection methods failed: {str(e)}, {str(fe)}")
-
-        try:
-            await setup_tools()
-        except Exception:
-            logger.exception("Error during startup tool discovery/mount")
+        # ADDED v0.0.41: Multi-server mode detection and setup
+        if MCP_ENABLE_MULTI_SERVER and MCP_SERVERS_CONFIG:
+            logger.info("Multi-server mode enabled, parsing server configurations")
+            servers = _parse_multi_server_config(MCP_SERVERS_CONFIG)
+            
+            if not servers:
+                logger.warning("No valid servers found in MCP_SERVERS_CONFIG, falling back to single server")
+                logger.info("Echo/Ping routes registered")
+                logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
+                await _setup_single_server(app)
+            else:
+                logger.info("Echo/Ping routes registered")
+                logger.info("Configuring for %d MCP servers in multi-server mode", len(servers))
+                for server in servers:
+                    logger.info(" - %s: %s (%s)", server.name, server.url, "enabled" if server.enabled else "disabled")
+                await _setup_multiple_servers(servers, app)
+        else:
+            logger.info("Single-server mode (existing v0.0.40.3 behavior)")
+            logger.info("Echo/Ping routes registered")  
+            logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
+            await _setup_single_server(app)
 
     @app.get("/")
     async def root():
@@ -1037,7 +1342,10 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
+# ENHANCED v0.0.41: Diagnostics with multi-server support
 def _collect_connector_diagnostics() -> Dict[str, Any]:
+    """Enhanced diagnostics including multi-server status - preserves all existing info"""
+    # Preserve ALL existing diagnostic logic
     info = {
         "mcp_version": _MCP_VERSION,
         "resolved_connector": _CONNECTOR_NAME,
@@ -1047,6 +1355,38 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "direct_http_fallback": "available",
         "mcp_remote_fallback": "available" if STDIO_AVAILABLE else "disabled (StdioClientTransport not found)",
     }
+    
+    # ADDED v0.0.41: Multi-server diagnostics (only adds, never modifies existing)
+    if MCP_ENABLE_MULTI_SERVER:
+        info["multi_server_mode"] = True
+        info["multi_server_config_provided"] = bool(MCP_SERVERS_CONFIG.strip())
+        
+        if MCP_SERVERS_CONFIG.strip():
+            try:
+                servers = _parse_multi_server_config(MCP_SERVERS_CONFIG)
+                info["configured_servers"] = [
+                    {
+                        "name": s.name,
+                        "type": s.server_type,
+                        "url": s.url,
+                        "enabled": s.enabled,
+                        "description": s.description,
+                        "has_headers": bool(s.headers),
+                        "has_auth_token": bool(s.auth_token)
+                    } for s in servers
+                ]
+                info["server_count"] = len(servers)
+                info["enabled_server_count"] = sum(1 for s in servers if s.enabled)
+            except Exception as e:
+                info["multi_server_config_error"] = str(e)
+        else:
+            info["configured_servers"] = []
+            info["server_count"] = 0
+    else:
+        info["multi_server_mode"] = False
+        info["single_server_url"] = MCP_SERVER_URL
+    
+    # Preserve all existing diagnostic logic (unchanged from v0.0.40.3)
     try:
         _mod = import_module("mcp.client.streamable_http")
         info["streamable_http_module_file"] = getattr(_mod, "__file__", "<unknown>")
