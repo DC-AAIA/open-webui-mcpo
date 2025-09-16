@@ -49,7 +49,7 @@ import subprocess
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from contextlib import asynccontextmanager
 from importlib import import_module
-from dataclass import dataclass, field  # ADDED v0.0.41: For MCPServerConfig
+from dataclasses import dataclass, field  # ADDED v0.0.41: For MCPServerConfig
 
 from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
