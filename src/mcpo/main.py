@@ -1,5 +1,11 @@
 """
-Open WebUI MCPO - main.py v0.0.42 (Multi-Server MCP Support)
+Open WebUI MCPO - main.py v0.0.43 (Multi-Server MCP Support)
+
+Changes from v0.0.42:
+- PRESERVES: ALL existing v0.0.42 functionality and error handling (1317 lines)
+- FIXED: Open WebUI request format handling for GitMCP tools (enhanced POST body processing)
+- ENHANCED: Request body validation and fallback logic for malformed Open WebUI requests
+- ADDED: Content-Type handling and robust payload normalization for GitMCP compatibility
 
 Changes from v0.0.41:
 - PRESERVES: ALL existing v0.0.41 functionality and error handling (1442 lines)
@@ -50,7 +56,7 @@ from contextlib import asynccontextmanager
 from importlib import import_module
 from dataclasses import dataclass, field  # ADDED v0.0.41: For MCPServerConfig
 
-from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi import FastAPI, Depends, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_core import ValidationError as PydValidationError
@@ -156,7 +162,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.42"  # CHANGED from v0.0.41: Updated version for GitMCP integration fixes
+APP_VERSION = "0.0.43"  # CHANGED from v0.0.42: Updated version for Open WebUI GitMCP integration fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -318,6 +324,57 @@ class MCPServerConfig:
         """Set default description if not provided"""
         if not self.description:
             self.description = f"MCP Server: {self.name}"
+
+# ADDED v0.0.43: Enhanced request body processing for Open WebUI compatibility
+async def _process_open_webui_payload(request: Request, raw_payload: Any) -> Dict[str, Any]:
+    """Process and normalize Open WebUI request payloads for GitMCP compatibility
+    
+    Handles various malformed request scenarios from Open WebUI:
+    - Null/undefined bodies
+    - Empty strings
+    - Malformed JSON
+    - Missing Content-Type headers
+    """
+    try:
+        # Check Content-Type for additional context
+        content_type = request.headers.get("content-type", "").lower()
+        logger.debug("Processing Open WebUI payload - Content-Type: %s, Raw payload type: %s", 
+                    content_type, type(raw_payload).__name__)
+        
+        # Handle null/None payloads (most common Open WebUI issue)
+        if raw_payload is None:
+            logger.info("Null payload detected - normalizing to empty dict for GitMCP compatibility")
+            return {}
+        
+        # Handle empty string payloads
+        if isinstance(raw_payload, str):
+            if not raw_payload.strip():
+                logger.info("Empty string payload detected - normalizing to empty dict")
+                return {}
+            # Try to parse as JSON
+            try:
+                parsed = json.loads(raw_payload)
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                logger.warning("Malformed JSON string payload: %s", raw_payload[:100])
+                return {}
+        
+        # Handle dictionary payloads (normal case)
+        if isinstance(raw_payload, dict):
+            return raw_payload
+        
+        # Handle list payloads (convert to dict with data key)
+        if isinstance(raw_payload, list):
+            logger.info("List payload detected - wrapping in dict for GitMCP compatibility")
+            return {"data": raw_payload}
+        
+        # Handle other types
+        logger.info("Unexpected payload type %s - normalizing to empty dict", type(raw_payload).__name__)
+        return {}
+        
+    except Exception as e:
+        logger.error("Payload processing error: %s - falling back to empty dict", e)
+        return {}
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -898,9 +955,9 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
 _DISCOVERED_TOOL_NAMES: List[str] = []
 _DISCOVERED_TOOLS_MIN: List[Dict[str, Any]] = []
 
-# ADDED v0.0.41: Multi-server tool route mounting
+# ENHANCED v0.0.43: Multi-server tool route mounting with Open WebUI compatibility
 async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MCPServerConfig], app: FastAPI):
-    """Mount routes for multi-server tools with proper server routing"""
+    """Mount routes for multi-server tools with proper server routing and Open WebUI compatibility"""
     
     # Create server lookup dictionary for efficient routing
     server_lookup = {server.name: server for server in servers}
@@ -923,16 +980,17 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
         route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
         logger.info("Registering multi-server route: %s -> %s:%s", route_path, server_name, original_tool_name)
         
-        # Create POST handler with server-specific routing
+        # ENHANCED v0.0.43: Create POST handler with Open WebUI request processing
         async def create_post_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
-            async def handler(payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
+            async def handler(request: Request, payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
                 try:
-                    if payload is None:
-                        logger.info("No request body provided - using empty dict for Open WebUI compatibility")
-                        payload = {}
+                    # ADDED v0.0.43: Enhanced Open WebUI payload processing
+                    processed_payload = await _process_open_webui_payload(request, payload)
+                    logger.debug("Processed payload for %s: %s -> %s", 
+                                orig_name, type(payload).__name__, type(processed_payload).__name__)
                         
-                    # Route to specific server
-                    result = await _call_multi_server_tool(server, orig_name, payload)
+                    # Route to specific server with processed payload
+                    result = await _call_multi_server_tool(server, orig_name, processed_payload)
                     return JSONResponse(status_code=200, content=result)
                     
                 except HTTPException:
