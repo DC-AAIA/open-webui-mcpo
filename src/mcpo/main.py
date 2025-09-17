@@ -1,12 +1,11 @@
 """
-Open WebUI MCPO - main.py v0.0.41 (Multi-Server MCP Support)
+Open WebUI MCPO - main.py v0.0.42 (Multi-Server MCP Support)
 
-Purpose:
-- Generate RESTful endpoints from MCP Tool Schemas using the Streamable HTTP MCP client.
-- FIXED: Uses direct HTTP as PRIMARY method for authentication compatibility
-- PRESERVES: ALL existing v0.0.40.3 functionality and error handling (1102 lines)
-- ENHANCED: Adds multi-server MCP support for concurrent server connections
-- CONSERVATIVE: Only adds multi-server functionality, zero modifications to existing code
+Changes from v0.0.41:
+- PRESERVES: ALL existing v0.0.41 functionality and error handling (1442 lines)
+- FIXED: Authentication leakage to GitMCP servers (server-specific auth filtering)
+- ENHANCED: HTTP method routing for GitMCP parameter-optional tools (GET routes)
+- ADDED: Server-specific authentication exclusion logic for GitMCP
 
 Changes from v0.0.40.3:
 - Added multi-server MCP support with MCPServerConfig dataclass
@@ -157,7 +156,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.41"  # CHANGED from v0.0.40.3: Updated version for multi-server support
+APP_VERSION = "0.0.42"  # CHANGED from v0.0.41: Updated version for GitMCP integration fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -461,10 +460,15 @@ async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], nam
 async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
     """Discover tools from specific MCP server"""
     headers = server.headers.copy()
-    if server.auth_token and "Authorization" not in headers:
-        headers["Authorization"] = f"Bearer {server.auth_token}"
     
-    logger.info("Discovering tools from server %s (%s)", server.name, server.url)
+    # FIXED v0.0.42: Only apply auth for servers that need it
+    if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {server.auth_token}"
+    # Explicitly exclude GitMCP from authentication
+    elif server.name == "gitmcp" and "Authorization" in headers:
+        headers.pop("Authorization", None)
+    
+    logger.info("Discovering tools from server %s (%s) - auth: %s", server.name, server.url, "enabled" if "Authorization" in headers else "disabled")
     
     try:
         # Try direct HTTP first (primary method)
@@ -488,10 +492,15 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
 async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Route tool call to appropriate MCP server"""
     headers = server.headers.copy()
-    if server.auth_token and "Authorization" not in headers:
-        headers["Authorization"] = f"Bearer {server.auth_token}"
     
-    logger.debug("Calling tool %s on server %s", tool_name, server.name)
+    # FIXED v0.0.42: Only apply auth for servers that need it
+    if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {server.auth_token}"
+    # GitMCP servers explicitly excluded from authentication
+    elif server.name == "gitmcp" and "Authorization" in headers:
+        headers.pop("Authorization", None)  # Remove any auth headers for GitMCP
+    
+    logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
     
     try:
         # Use direct HTTP first (proven working method)
@@ -936,13 +945,18 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
         handler = await create_post_handler(tool, server_config, original_tool_name)
         app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
         
-        # Add GET route for parameter-less tools
+        # ENHANCED v0.0.42: Add GET route for GitMCP tools (always) and parameter-less tools (existing logic)
         input_schema = tool.inputSchema or {}
-        if not input_schema.get('properties') and not input_schema.get('required'):
+        is_parameter_less = not input_schema.get('properties') and not input_schema.get('required')
+        is_gitmcp_tool = server_name == "gitmcp"
+        
+        if is_parameter_less or is_gitmcp_tool:
             async def create_get_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
                 async def get_handler(dep=Depends(api_dependency())):
                     try:
-                        result = await _call_multi_server_tool(server, orig_name, {})
+                        # GitMCP tools always use empty payload, parameter-less tools use empty dict
+                        payload = {} if is_gitmcp_tool else {}
+                        result = await _call_multi_server_tool(server, orig_name, payload)
                         return JSONResponse(status_code=200, content=result)
                     except HTTPException:
                         raise
@@ -953,7 +967,7 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
                 
             get_handler = await create_get_handler(tool, server_config, original_tool_name)
             app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
-            logger.info("Added GET route for parameter-less multi-server tool: %s", route_path)
+            logger.info("Added GET route for %s tool: %s", "GitMCP" if is_gitmcp_tool else "parameter-less", route_path)
 
 # ADDED v0.0.41: Multiple server setup function
 async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
