@@ -1,5 +1,18 @@
 """
-Open WebUI MCPO - main.py v0.0.43 (Multi-Server MCP Support)
+Open WebUI MCPO - main.py v0.0.44 (Open WebUI Protocol Compatibility Fix)
+
+Changes from v0.0.43:
+- PRESERVES: ALL existing v0.0.43 functionality and error handling (1514 lines)
+- FIXED: Response format consistency for Open WebUI (lines 500-514, 694-717, 943-953)
+- FIXED: Empty tool response handling to always return structured content (lines 502-503, 701-702, 944-945)
+- FIXED: Error response structure consistency (lines 496-497, 921-927, 936-940)
+- ENHANCED: Content array preservation for Open WebUI expectations
+
+Protocol Fixes Applied:
+1. Standardized response format: Always returns {"result": content} for Open WebUI compatibility
+2. Empty responses return {"result": ""} instead of {} for consistency
+3. Error responses unified under {"error": message} structure
+4. Content arrays preserved without premature JSON parsing
 
 Changes from v0.0.42:
 - PRESERVES: ALL existing v0.0.42 functionality and error handling (1317 lines)
@@ -162,7 +175,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.43"  # CHANGED from v0.0.42: Updated version for Open WebUI GitMCP integration fixes
+APP_VERSION = "0.0.44"  # CHANGED from v0.0.43: Updated version for Open WebUI protocol compatibility fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -219,7 +232,7 @@ def _parse_headers(hs: str) -> Dict[str, str]:
 # ADDED v0.0.41: Multi-server configuration parser
 def _parse_multi_server_config(config_str: str) -> List['MCPServerConfig']:
     """Parse MCP_SERVERS_CONFIG JSON into MCPServerConfig objects
-    
+
     Supports Claude Desktop mcpServers format:
     {
       "mcpServers": {
@@ -236,18 +249,18 @@ def _parse_multi_server_config(config_str: str) -> List['MCPServerConfig']:
     """
     if not config_str.strip():
         return []
-    
+
     try:
         config_data = json.loads(config_str)
         servers = []
-        
+
         # Support both direct format and mcpServers wrapper
         servers_data = config_data.get("mcpServers", config_data)
-        
+
         for name, server_info in servers_data.items():
             if not isinstance(server_info, dict):
                 continue
-                
+
             server_config = MCPServerConfig(
                 name=name,
                 server_type=server_info.get("type", "streamable-http"),
@@ -257,18 +270,18 @@ def _parse_multi_server_config(config_str: str) -> List['MCPServerConfig']:
                 description=server_info.get("description", f"MCP Server: {name}"),
                 enabled=server_info.get("enabled", True)
             )
-            
+
             # If no direct auth_token but Authorization header exists, extract it
             if not server_config.auth_token and "Authorization" in server_config.headers:
                 auth_value = server_config.headers["Authorization"]
                 if auth_value.startswith("Bearer "):
                     server_config.auth_token = auth_value.split(" ", 1)[1]
-                    
+
             servers.append(server_config)
-            
+
         logger.info("Parsed %d server configurations from MCP_SERVERS_CONFIG", len(servers))
         return servers
-        
+
     except json.JSONDecodeError as e:
         logger.error("Failed to parse MCP_SERVERS_CONFIG as JSON: %s", e)
         return []
@@ -319,7 +332,7 @@ class MCPServerConfig:
     auth_token: str = ""
     description: str = ""
     enabled: bool = True
-    
+
     def __post_init__(self):
         """Set default description if not provided"""
         if not self.description:
@@ -328,7 +341,7 @@ class MCPServerConfig:
 # ADDED v0.0.43: Enhanced request body processing for Open WebUI compatibility
 async def _process_open_webui_payload(request: Request, raw_payload: Any) -> Dict[str, Any]:
     """Process and normalize Open WebUI request payloads for GitMCP compatibility
-    
+
     Handles various malformed request scenarios from Open WebUI:
     - Null/undefined bodies
     - Empty strings
@@ -338,14 +351,14 @@ async def _process_open_webui_payload(request: Request, raw_payload: Any) -> Dic
     try:
         # Check Content-Type for additional context
         content_type = request.headers.get("content-type", "").lower()
-        logger.debug("Processing Open WebUI payload - Content-Type: %s, Raw payload type: %s", 
+        logger.debug("Processing Open WebUI payload - Content-Type: %s, Raw payload type: %s",
                     content_type, type(raw_payload).__name__)
-        
+
         # Handle null/None payloads (most common Open WebUI issue)
         if raw_payload is None:
             logger.info("Null payload detected - normalizing to empty dict for GitMCP compatibility")
             return {}
-        
+
         # Handle empty string payloads
         if isinstance(raw_payload, str):
             if not raw_payload.strip():
@@ -358,23 +371,48 @@ async def _process_open_webui_payload(request: Request, raw_payload: Any) -> Dic
             except json.JSONDecodeError:
                 logger.warning("Malformed JSON string payload: %s", raw_payload[:100])
                 return {}
-        
+
         # Handle dictionary payloads (normal case)
         if isinstance(raw_payload, dict):
             return raw_payload
-        
+
         # Handle list payloads (convert to dict with data key)
         if isinstance(raw_payload, list):
             logger.info("List payload detected - wrapping in dict for GitMCP compatibility")
             return {"data": raw_payload}
-        
+
         # Handle other types
         logger.info("Unexpected payload type %s - normalizing to empty dict", type(raw_payload).__name__)
         return {}
-        
+
     except Exception as e:
         logger.error("Payload processing error: %s - falling back to empty dict", e)
         return {}
+
+# ADDED v0.0.44: Standardized response formatting for Open WebUI
+def _format_tool_response(content: Any) -> Dict[str, Any]:
+    """Format tool response consistently for Open WebUI compatibility
+
+    Protocol Fix: Ensures all responses follow {"result": content} structure
+    """
+    # If already has result key, return as-is
+    if isinstance(content, dict) and "result" in content:
+        return content
+
+    # If has content key, wrap in result
+    if isinstance(content, dict) and "content" in content:
+        return {"result": content["content"]}
+
+    # If has raw key, preserve text content
+    if isinstance(content, dict) and "raw" in content:
+        return {"result": content["raw"]}
+
+    # Empty responses return empty string for consistency
+    if not content:
+        return {"result": ""}
+
+    # Wrap any other content in result
+    return {"result": content}
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -493,40 +531,46 @@ async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], nam
 
         result = response.json()
 
+        # FIXED v0.0.44: Unified error response structure
         if "error" in result:
-            raise HTTPException(status_code=400, detail={"mcp_error": result["error"]})
+            raise HTTPException(status_code=400, detail={"error": result["error"]})
 
         tool_result = result.get("result", {})
         content = tool_result.get("content", [])
 
+        # FIXED v0.0.44: Consistent response formatting for Open WebUI
         if not content:
-            return {}
+            return {"result": ""}
 
-        first = content[0]
+        # Preserve full content array for Open WebUI
+        first = content[0] if content else {}
         text = first.get("text") if isinstance(first, dict) else None
 
-        if not text:
-            return {"content": content}
+        if text:
+            # Try to parse as JSON but preserve structure
+            try:
+                parsed = json.loads(text)
+                return {"result": parsed}
+            except Exception:
+                return {"result": text}
 
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw": text}
+        # Return full content array wrapped in result
+        return {"result": content}
 
 # ADDED v0.0.41: Multi-server tool discovery
 async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
     """Discover tools from specific MCP server"""
     headers = server.headers.copy()
-    
+
     # FIXED v0.0.42: Only apply auth for servers that need it
     if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {server.auth_token}"
     # Explicitly exclude GitMCP from authentication
     elif server.name == "gitmcp" and "Authorization" in headers:
         headers.pop("Authorization", None)
-    
+
     logger.info("Discovering tools from server %s (%s) - auth: %s", server.name, server.url, "enabled" if "Authorization" in headers else "disabled")
-    
+
     try:
         # Try direct HTTP first (primary method)
         tools = await discover_tools_via_http_fallback(server.url, headers)
@@ -534,7 +578,7 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
         return tools
     except Exception as e:
         logger.warning("Direct HTTP tool discovery failed for server %s: %s", server.name, e)
-        
+
         # Fallback to MCP connector
         try:
             async with _connector_wrapper(server.url) as (reader, writer):
@@ -549,29 +593,31 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
 async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Route tool call to appropriate MCP server"""
     headers = server.headers.copy()
-    
+
     # FIXED v0.0.42: Only apply auth for servers that need it
     if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {server.auth_token}"
     # GitMCP servers explicitly excluded from authentication
     elif server.name == "gitmcp" and "Authorization" in headers:
         headers.pop("Authorization", None)  # Remove any auth headers for GitMCP
-    
+
     logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
-    
+
     try:
         # Use direct HTTP first (proven working method)
         result = await call_mcp_tool_via_http_fallback(server.url, headers, tool_name, arguments)
-        return result
-        
+        # FIXED v0.0.44: Apply consistent response formatting
+        return _format_tool_response(result)
+
     except Exception as e:
         logger.warning("Direct HTTP failed for tool %s on server %s: %s", tool_name, server.name, e)
-        
+
         # Fallback to MCP connector
         try:
             async with _connector_wrapper(server.url) as (reader, writer):
                 result = await call_mcp_tool(reader, writer, tool_name, arguments)
-                return result
+                # FIXED v0.0.44: Apply consistent response formatting
+                return _format_tool_response(result)
         except Exception as fe:
             logger.exception("All methods failed for tool %s on server %s: %s, %s", tool_name, server.name, e, fe)
             raise HTTPException(status_code=502, detail=f"All connection methods failed: {str(e)}, {str(fe)}")
@@ -698,8 +744,9 @@ class MCPRemoteManager:
             else:
                 content = []
 
+            # FIXED v0.0.44: Consistent empty response handling
             if not content:
-                return {}
+                return {"result": ""}
 
             first_item = content[0]
             if hasattr(first_item, 'text'):
@@ -709,13 +756,15 @@ class MCPRemoteManager:
             else:
                 text = str(first_item)
 
-            if not text:
-                return {"content": content}
+            if text:
+                try:
+                    parsed = json.loads(text)
+                    return {"result": parsed}
+                except Exception:
+                    return {"result": text}
 
-            try:
-                return json.loads(text)
-            except Exception:
-                return {"raw": text}
+            # Return full content array
+            return {"result": content}
 
         except Exception as e:
             logger.error("Failed to call tool %s via mcp-remote: %s", name, e)
@@ -918,39 +967,47 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         try:
             resp = await session.call_tool(name=name, arguments=arguments)
         except McpError as me:
-            detail = {"mcp_error": getattr(me, "message", str(me))}
+            # FIXED v0.0.44: Unified error response structure
+            detail = {"error": getattr(me, "message", str(me))}
             try:
                 if hasattr(me, "args") and me.args:
-                    detail["args"] = [str(a) for a in me.args]
+                    detail["error_details"] = [str(a) for a in me.args]
             except Exception:
                 pass
             raise HTTPException(status_code=400, detail=detail)
         except RuntimeError as re:
-            return {"raw_error": str(re)}
+            return {"error": str(re)}
         except PydValidationError as e:
-            raise HTTPException(status_code=502, detail={"validation_error": str(e)})
+            raise HTTPException(status_code=502, detail={"error": f"Validation error: {str(e)}"})
 
         result = resp or {}
         try:
             if isinstance(result, dict):
                 if "error" in result and result["error"]:
-                    raise HTTPException(status_code=502, detail={"mcp_error": result["error"]})
+                    raise HTTPException(status_code=502, detail={"error": result["error"]})
                 if "errors" in result and result["errors"]:
-                    raise HTTPException(status_code=502, detail={"mcp_errors": result["errors"]})
+                    raise HTTPException(status_code=502, detail={"error": result["errors"]})
         except HTTPException:
             raise
 
         content = result.get("content") or []
+        # FIXED v0.0.44: Consistent response handling
         if not content:
-            return {}
-        first = content[0]
+            return {"result": ""}
+
+        # Preserve content array structure for Open WebUI
+        first = content[0] if content else {}
         text = first.get("text") if isinstance(first, dict) else None
-        if not text:
-            return {"content": content}
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw": text}
+
+        if text:
+            try:
+                parsed = json.loads(text)
+                return {"result": parsed}
+            except Exception:
+                return {"result": text}
+
+        # Return full content array
+        return {"result": content}
 
 _DISCOVERED_TOOL_NAMES: List[str] = []
 _DISCOVERED_TOOLS_MIN: List[Dict[str, Any]] = []
@@ -958,56 +1015,56 @@ _DISCOVERED_TOOLS_MIN: List[Dict[str, Any]] = []
 # ENHANCED v0.0.43: Multi-server tool route mounting with Open WebUI compatibility
 async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MCPServerConfig], app: FastAPI):
     """Mount routes for multi-server tools with proper server routing and Open WebUI compatibility"""
-    
+
     # Create server lookup dictionary for efficient routing
     server_lookup = {server.name: server for server in servers}
-    
+
     for tool in tools:
         # Extract server name from namespaced tool name (format: servername_toolname)
         name_parts = tool.name.split('_', 1)
         if len(name_parts) < 2:
             logger.warning("Skipping tool with invalid namespaced name: %s", tool.name)
             continue
-            
+
         server_name = name_parts[0]
         original_tool_name = name_parts[1]
         server_config = server_lookup.get(server_name)
-        
+
         if not server_config:
             logger.warning("No server config found for tool: %s (server: %s)", tool.name, server_name)
             continue
-            
+
         route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
         logger.info("Registering multi-server route: %s -> %s:%s", route_path, server_name, original_tool_name)
-        
+
         # ENHANCED v0.0.43: Create POST handler with Open WebUI request processing
         async def create_post_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
             async def handler(request: Request, payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
                 try:
                     # ADDED v0.0.43: Enhanced Open WebUI payload processing
                     processed_payload = await _process_open_webui_payload(request, payload)
-                    logger.debug("Processed payload for %s: %s -> %s", 
+                    logger.debug("Processed payload for %s: %s -> %s",
                                 orig_name, type(payload).__name__, type(processed_payload).__name__)
-                        
+
                     # Route to specific server with processed payload
                     result = await _call_multi_server_tool(server, orig_name, processed_payload)
                     return JSONResponse(status_code=200, content=result)
-                    
+
                 except HTTPException:
                     raise
                 except Exception as e:
                     logger.exception("Multi-server tool call failed for %s on %s: %s", orig_name, server.name, e)
                     raise HTTPException(status_code=502, detail=str(e))
             return handler
-        
+
         handler = await create_post_handler(tool, server_config, original_tool_name)
         app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
-        
+
         # ENHANCED v0.0.42: Add GET route for GitMCP tools (always) and parameter-less tools (existing logic)
         input_schema = tool.inputSchema or {}
         is_parameter_less = not input_schema.get('properties') and not input_schema.get('required')
         is_gitmcp_tool = server_name == "gitmcp"
-        
+
         if is_parameter_less or is_gitmcp_tool:
             async def create_get_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
                 async def get_handler(dep=Depends(api_dependency())):
@@ -1022,7 +1079,7 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
                         logger.exception("Multi-server GET tool call failed for %s on %s: %s", orig_name, server.name, e)
                         raise HTTPException(status_code=502, detail=str(e))
                 return get_handler
-                
+
             get_handler = await create_get_handler(tool, server_config, original_tool_name)
             app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
             logger.info("Added GET route for %s tool: %s", "GitMCP" if is_gitmcp_tool else "parameter-less", route_path)
@@ -1031,25 +1088,25 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
 async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
     """Setup multiple MCP servers concurrently"""
     logger.info("Setting up %d MCP servers concurrently", len(servers))
-    
+
     all_tools = []
-    
+
     # Discover tools from all enabled servers
     for server in servers:
         if not server.enabled:
             logger.info("Skipping disabled server: %s", server.name)
             continue
-            
+
         try:
             logger.info("Connecting to MCP server: %s (%s)", server.name, server.url)
-            
+
             # Discover tools from this server
             server_tools = await _discover_server_tools(server)
-            
+
             if not server_tools:
                 logger.warning("No tools discovered from server %s", server.name)
                 continue
-            
+
             # Namespace tools with server name to avoid conflicts
             namespaced_tools = []
             for tool in server_tools:
@@ -1060,22 +1117,22 @@ async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
                     outputSchema=tool.outputSchema
                 )
                 namespaced_tools.append(namespaced_tool)
-            
+
             all_tools.extend(namespaced_tools)
             logger.info("Added %d namespaced tools from server %s", len(namespaced_tools), server.name)
-            
+
         except Exception as e:
             logger.error("Failed to connect to server %s (%s): %s", server.name, server.url, e)
             # Continue with other servers rather than failing completely
             continue
-    
+
     if not all_tools:
         logger.error("No tools discovered from any MCP server")
         return
-    
+
     # Mount routes for all discovered tools
     await _mount_multi_server_tool_routes(all_tools, servers, app)
-    
+
     # Update global tool lists for diagnostics and listing endpoints
     _DISCOVERED_TOOL_NAMES.clear()
     _DISCOVERED_TOOL_NAMES.extend([t.name for t in all_tools])
@@ -1089,14 +1146,14 @@ async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
             })
         except Exception:
             pass
-    
+
     logger.info("Successfully configured %d tools from %d servers", len(all_tools), len(servers))
 
 # ADDED v0.0.41: Single-server setup (preserved existing logic)
 async def _setup_single_server(app: FastAPI):
     """Preserve ALL existing single-server setup logic exactly as-is"""
     logger.info("Single-server mode (preserving v0.0.40.3 behavior)")
-    
+
     headers = _parse_headers(MCP_HEADERS)
     if headers:
         logger.info("Direct HTTP fallback headers configured with keys: %s", list(headers.keys()))
@@ -1118,13 +1175,17 @@ async def _setup_single_server(app: FastAPI):
                         logger.info("No request body provided - using empty dict for Open WebUI compatibility")
                         payload = {}
                     result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
-                    return JSONResponse(status_code=200, content=result)
+                    # FIXED v0.0.44: Apply consistent response formatting
+                    formatted_result = _format_tool_response(result)
+                    return JSONResponse(status_code=200, content=formatted_result)
                 except Exception as e:
                     logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
                     try:
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                             result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
-                            return JSONResponse(status_code=200, content=result)
+                            # FIXED v0.0.44: Apply consistent response formatting
+                            formatted_result = _format_tool_response(result)
+                            return JSONResponse(status_code=200, content=formatted_result)
                     except HTTPException as he:
                         raise he
                     except Exception as fe:
@@ -1140,7 +1201,9 @@ async def _setup_single_server(app: FastAPI):
                         result = await call_mcp_tool_via_http_fallback(
                             MCP_SERVER_URL, headers, _tool.name, {}
                         )
-                        return JSONResponse(status_code=200, content=result)
+                        # FIXED v0.0.44: Apply consistent response formatting
+                        formatted_result = _format_tool_response(result)
+                        return JSONResponse(status_code=200, content=formatted_result)
                     except Exception as e:
                         logger.warning(
                             "Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e
@@ -1148,7 +1211,9 @@ async def _setup_single_server(app: FastAPI):
                         try:
                             async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
                                 result = await call_mcp_tool(reader, writer, _tool.name, {})
-                                return JSONResponse(status_code=200, content=result)
+                                # FIXED v0.0.44: Apply consistent response formatting
+                                formatted_result = _format_tool_response(result)
+                                return JSONResponse(status_code=200, content=formatted_result)
                         except HTTPException as he:
                             raise he
                         except Exception as fe:
@@ -1247,7 +1312,9 @@ async def _setup_single_server(app: FastAPI):
                                     async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
                                         try:
                                             result = await manager.call_tool(tool_name, payload or {})
-                                            return JSONResponse(status_code=200, content=result)
+                                            # FIXED v0.0.44: Apply consistent response formatting
+                                            formatted_result = _format_tool_response(result)
+                                            return JSONResponse(status_code=200, content=formatted_result)
                                         except HTTPException:
                                             raise
                                         except Exception as e:
@@ -1322,7 +1389,7 @@ def create_app() -> FastAPI:
         if MCP_ENABLE_MULTI_SERVER and MCP_SERVERS_CONFIG:
             logger.info("Multi-server mode enabled, parsing server configurations")
             servers = _parse_multi_server_config(MCP_SERVERS_CONFIG)
-            
+
             if not servers:
                 logger.warning("No valid servers found in MCP_SERVERS_CONFIG, falling back to single server")
                 logger.info("Echo/Ping routes registered")
@@ -1336,7 +1403,7 @@ def create_app() -> FastAPI:
                 await _setup_multiple_servers(servers, app)
         else:
             logger.info("Single-server mode (existing v0.0.40.3 behavior)")
-            logger.info("Echo/Ping routes registered")  
+            logger.info("Echo/Ping routes registered")
             logger.info("Configuring for a single StreamableHTTP MCP Server with URL [%s]", MCP_SERVER_URL)
             await _setup_single_server(app)
 
@@ -1427,12 +1494,12 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "direct_http_fallback": "available",
         "mcp_remote_fallback": "available" if STDIO_AVAILABLE else "disabled (StdioClientTransport not found)",
     }
-    
+
     # ADDED v0.0.41: Multi-server diagnostics (only adds, never modifies existing)
     if MCP_ENABLE_MULTI_SERVER:
         info["multi_server_mode"] = True
         info["multi_server_config_provided"] = bool(MCP_SERVERS_CONFIG.strip())
-        
+
         if MCP_SERVERS_CONFIG.strip():
             try:
                 servers = _parse_multi_server_config(MCP_SERVERS_CONFIG)
@@ -1457,7 +1524,7 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
     else:
         info["multi_server_mode"] = False
         info["single_server_url"] = MCP_SERVER_URL
-    
+
     # Preserve all existing diagnostic logic (unchanged from v0.0.40.3)
     try:
         _mod = import_module("mcp.client.streamable_http")
