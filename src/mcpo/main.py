@@ -1,5 +1,18 @@
 """
-Open WebUI MCPO - main.py v0.0.44 (Open WebUI Protocol Compatibility Fix)
+Open WebUI MCPO - main.py v0.0.45 (Open WebUI Request Body Tolerance Fix)
+
+Changes from v0.0.44:
+- PRESERVES: ALL existing v0.0.44 functionality and response formatting (1515 lines)
+- FIXED: MCP-remote handler empty body rejection (line 1312)
+- ENHANCED: Request body tolerance for Open WebUI lightweight requests
+- ADDED: Better default parameter handling for empty request bodies
+- IMPROVED: Body parsing flexibility for minimal Open WebUI requests
+
+Request Body Tolerance Fixes Applied:
+1. Fixed mcp-remote handler to accept Optional[Dict] with Body(None)
+2. Enhanced empty body handling with better default parameter generation
+3. Improved request payload tolerance for minimal Open WebUI patterns
+4. All v0.0.44 response formatting improvements preserved
 
 Changes from v0.0.43:
 - PRESERVES: ALL existing v0.0.43 functionality and error handling (1514 lines)
@@ -175,7 +188,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.44"  # CHANGED from v0.0.43: Updated version for Open WebUI protocol compatibility fixes
+APP_VERSION = "0.0.45"  # CHANGED from v0.0.44: Updated version for Open WebUI request body tolerance fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -413,6 +426,50 @@ def _format_tool_response(content: Any) -> Dict[str, Any]:
 
     # Wrap any other content in result
     return {"result": content}
+
+# ADDED v0.0.45: Enhanced request body tolerance for Open WebUI
+def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Ensure request payload compatibility with Open WebUI lightweight requests
+
+    Handles Open WebUI's minimal request patterns:
+    - Empty POST bodies
+    - Minimal request payloads
+    - Missing required parameters with sensible defaults
+    """
+    # Handle None/empty payloads
+    if payload is None:
+        payload = {}
+
+    # Convert non-dict payloads to dict
+    if not isinstance(payload, dict):
+        payload = {}
+
+    # If tool expects parameters but payload is empty, provide defaults based on schema
+    if tool_schema and not payload:
+        properties = tool_schema.get('properties', {})
+        required = tool_schema.get('required', [])
+
+        # Generate minimal defaults for required parameters
+        for param in required:
+            if param not in payload:
+                param_schema = properties.get(param, {})
+                param_type = param_schema.get('type', 'string')
+
+                # Provide sensible defaults based on type
+                if param_type == 'string':
+                    payload[param] = param_schema.get('default', '')
+                elif param_type == 'number' or param_type == 'integer':
+                    payload[param] = param_schema.get('default', 0)
+                elif param_type == 'boolean':
+                    payload[param] = param_schema.get('default', False)
+                elif param_type == 'array':
+                    payload[param] = param_schema.get('default', [])
+                elif param_type == 'object':
+                    payload[param] = param_schema.get('default', {})
+                else:
+                    payload[param] = param_schema.get('default', '')
+
+    return payload
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -1043,11 +1100,16 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
                 try:
                     # ADDED v0.0.43: Enhanced Open WebUI payload processing
                     processed_payload = await _process_open_webui_payload(request, payload)
-                    logger.debug("Processed payload for %s: %s -> %s",
-                                orig_name, type(payload).__name__, type(processed_payload).__name__)
+
+                    # ADDED v0.0.45: Ensure request compatibility with tool schema
+                    tool_schema = tool_obj.inputSchema if tool_obj else {}
+                    compatible_payload = _ensure_request_compatibility(processed_payload, tool_schema)
+
+                    logger.debug("Processed payload for %s: %s -> %s -> %s",
+                                orig_name, type(payload).__name__, type(processed_payload).__name__, type(compatible_payload).__name__)
 
                     # Route to specific server with processed payload
-                    result = await _call_multi_server_tool(server, orig_name, processed_payload)
+                    result = await _call_multi_server_tool(server, orig_name, compatible_payload)
                     return JSONResponse(status_code=200, content=result)
 
                 except HTTPException:
@@ -1171,10 +1233,16 @@ async def _setup_single_server(app: FastAPI):
 
             async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                 try:
+                    # ENHANCED v0.0.45: Better empty body handling with schema-aware defaults
                     if payload is None:
                         logger.info("No request body provided - using empty dict for Open WebUI compatibility")
                         payload = {}
-                    result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, payload or {})
+
+                    # Ensure compatibility with tool schema
+                    tool_schema = _tool.inputSchema if _tool else {}
+                    compatible_payload = _ensure_request_compatibility(payload, tool_schema)
+
+                    result = await call_mcp_tool_via_http_fallback(MCP_SERVER_URL, headers, _tool.name, compatible_payload)
                     # FIXED v0.0.44: Apply consistent response formatting
                     formatted_result = _format_tool_response(result)
                     return JSONResponse(status_code=200, content=formatted_result)
@@ -1182,7 +1250,7 @@ async def _setup_single_server(app: FastAPI):
                     logger.warning("Direct HTTP failed for tool %s, trying MCP connector: %s", _tool.name, e)
                     try:
                         async with _connector_wrapper(MCP_SERVER_URL) as (reader, writer):
-                            result = await call_mcp_tool(reader, writer, _tool.name, payload or {})
+                            result = await call_mcp_tool(reader, writer, _tool.name, compatible_payload)
                             # FIXED v0.0.44: Apply consistent response formatting
                             formatted_result = _format_tool_response(result)
                             return JSONResponse(status_code=200, content=formatted_result)
@@ -1309,8 +1377,14 @@ async def _setup_single_server(app: FastAPI):
                             for tool in tools:
                                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                                 async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
-                                    async def handler(payload: Dict[str, Any], dep=Depends(api_dependency())):
+                                    # FIXED v0.0.45: Accept optional payload to handle empty Open WebUI requests
+                                    async def handler(payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
                                         try:
+                                            # Handle empty request bodies from Open WebUI
+                                            if payload is None:
+                                                logger.info("No request body provided for mcp-remote tool %s - using empty dict", tool_name)
+                                                payload = {}
+
                                             result = await manager.call_tool(tool_name, payload or {})
                                             # FIXED v0.0.44: Apply consistent response formatting
                                             formatted_result = _format_tool_response(result)
