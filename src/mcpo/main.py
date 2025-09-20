@@ -1,8 +1,22 @@
 """
-Open WebUI MCPO - main.py v0.0.46 (GitMCP Protocol Integration Fix)
+Open WebUI MCPO - main.py v0.0.47 (GitMCP NPX-Remote Wrapper Fix)
+
+Changes from v0.0.46:
+- PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
+- FIXED: GitMCP connection method - replaced direct MCP client with MCPRemoteManager (npx mcp-remote wrapper)
+- ENHANCED: GitMCP servers now use proper npx mcp-remote subprocess approach (like Claude Desktop)
+- ADDED: GitMCP routing through existing MCPRemoteManager class for proper NPX wrapper integration
+- IMPROVED: GitMCP tool discovery and execution via npx subprocess instead of direct MCP protocol
+
+GitMCP NPX Wrapper Integration Fixes Applied:
+1. Fixed GitMCP connections to use MCPRemoteManager (npx mcp-remote) instead of direct MCP client
+2. GitMCP servers now use npx subprocess wrapper approach (like Claude Desktop)
+3. Replaced direct _connector_wrapper() for GitMCP with MCPRemoteManager routing
+4. Eliminated "TaskGroup sub-exception" errors by using proper NPX wrapper approach
+5. All v0.0.46 GitMCP detection, v0.0.45 request body tolerance, and v0.0.44 response formatting preserved
 
 Changes from v0.0.45:
-- PRESERVES: ALL existing v0.0.45 request body tolerance and v0.0.44 response formatting (1556 lines)
+- PRESERVES: ALL existing v0.0.45 functionality and response formatting (1556 lines)
 - FIXED: GitMCP protocol integration - replaced HTTP calls with proper MCP client protocol
 - ENHANCED: GitMCP servers now use MCP client connections instead of HTTP fallback
 - ADDED: Dedicated GitMCP MCP protocol handling for proper WebSocket/SSE communication
@@ -202,7 +216,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.46"  # CHANGED from v0.0.45: Updated version for GitMCP protocol integration fixes
+APP_VERSION = "0.0.47"  # CHANGED from v0.0.46: Updated version for GitMCP NPX-remote wrapper fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -655,17 +669,22 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
 
     logger.info("Discovering tools from server %s (%s) - auth: %s", server.name, server.url, "enabled" if "Authorization" in headers else "disabled")
 
-    # ADDED v0.0.46: Use proper MCP protocol for GitMCP servers
+    # ADDED v0.0.47: Use MCPRemoteManager (npx mcp-remote) for GitMCP servers
     if _is_gitmcp_server(server.name, server.url):
-        logger.info("Detected GitMCP server %s - using MCP client protocol instead of HTTP", server.name)
+        logger.info("Detected GitMCP server %s - using npx mcp-remote wrapper instead of direct MCP client", server.name)
         try:
-            # Use MCP client protocol directly for GitMCP (like Claude Desktop)
-            async with _connector_wrapper(server.url) as (reader, writer):
-                tools = await list_mcp_tools(reader, writer)
-                logger.info("Discovered %d tools from GitMCP server %s via MCP protocol", len(tools), server.name)
+            # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
+            mcp_remote = MCPRemoteManager()
+            # GitMCP doesn't require auth token for npx mcp-remote
+            await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
+            try:
+                tools = await mcp_remote.list_tools()
+                logger.info("Discovered %d tools from GitMCP server %s via npx mcp-remote", len(tools), server.name)
                 return tools
+            finally:
+                await mcp_remote.stop()
         except Exception as e:
-            logger.error("GitMCP MCP protocol connection failed for server %s: %s", server.name, e)
+            logger.error("GitMCP npx mcp-remote connection failed for server %s: %s", server.name, e)
             return []
 
     try:
@@ -700,18 +719,23 @@ async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, argum
 
     logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
 
-    # ADDED v0.0.46: Use proper MCP protocol for GitMCP servers
+    # ADDED v0.0.47: Use MCPRemoteManager (npx mcp-remote) for GitMCP servers
     if _is_gitmcp_server(server.name, server.url):
-        logger.debug("Using MCP protocol for GitMCP server %s tool %s", server.name, tool_name)
+        logger.debug("Using npx mcp-remote for GitMCP server %s tool %s", server.name, tool_name)
         try:
-            # Use MCP client protocol directly for GitMCP (like Claude Desktop)
-            async with _connector_wrapper(server.url) as (reader, writer):
-                result = await call_mcp_tool(reader, writer, tool_name, arguments)
+            # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
+            mcp_remote = MCPRemoteManager()
+            # GitMCP doesn't require auth token for npx mcp-remote
+            await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
+            try:
+                result = await mcp_remote.call_tool(tool_name, arguments)
                 # FIXED v0.0.44: Apply consistent response formatting
                 return _format_tool_response(result)
+            finally:
+                await mcp_remote.stop()
         except Exception as e:
-            logger.exception("GitMCP MCP protocol tool call failed for %s on %s: %s", tool_name, server.name, e)
-            raise HTTPException(status_code=502, detail=f"GitMCP MCP protocol connection failed: {str(e)}")
+            logger.exception("GitMCP npx mcp-remote tool call failed for %s on %s: %s", tool_name, server.name, e)
+            raise HTTPException(status_code=502, detail=f"GitMCP npx mcp-remote connection failed: {str(e)}")
 
     try:
         # Use direct HTTP first (proven working method for non-GitMCP servers)
@@ -744,17 +768,22 @@ class MCPRemoteManager:
         if not STDIO_AVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
 
-        if not auth_token:
-            raise RuntimeError("Auth token required for mcp-remote")
+        # MODIFIED v0.0.47: GitMCP doesn't require auth token for npx mcp-remote
+        # Build mcp-remote command - conditionally add auth header
+        if auth_token and auth_token != "dummy_token":
+            cmd = [
+                "npx", "-y", "mcp-remote",
+                url,
+                "--header", f"Authorization: Bearer {auth_token}"
+            ]
+        else:
+            # GitMCP case - no auth header needed
+            cmd = [
+                "npx", "-y", "mcp-remote",
+                url
+            ]
 
-        # Build mcp-remote command with authentication
-        cmd = [
-            "npx", "-y", "mcp-remote",
-            url,
-            "--header", f"Authorization: Bearer {auth_token}"
-        ]
-
-        logger.info("Starting mcp-remote subprocess")
+        logger.info("Starting mcp-remote subprocess for URL: %s", url)
 
         # Start mcp-remote subprocess
         self.process = await asyncio.create_subprocess_exec(
