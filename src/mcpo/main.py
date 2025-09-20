@@ -1,5 +1,19 @@
 """
-Open WebUI MCPO - main.py v0.0.45 (Open WebUI Request Body Tolerance Fix)
+Open WebUI MCPO - main.py v0.0.46 (GitMCP Protocol Integration Fix)
+
+Changes from v0.0.45:
+- PRESERVES: ALL existing v0.0.45 request body tolerance and v0.0.44 response formatting (1556 lines)
+- FIXED: GitMCP protocol integration - replaced HTTP calls with proper MCP client protocol
+- ENHANCED: GitMCP servers now use MCP client connections instead of HTTP fallback
+- ADDED: Dedicated GitMCP MCP protocol handling for proper WebSocket/SSE communication
+- IMPROVED: GitMCP tool discovery and execution via native MCP protocol (like Claude Desktop)
+
+GitMCP Protocol Integration Fixes Applied:
+1. Fixed GitMCP connections to use proper MCP client protocol instead of HTTP calls
+2. GitMCP servers now use MCP WebSocket/SSE protocol communication (like Claude Desktop)
+3. Replaced HTTP fallback for GitMCP with proper MCP client protocol
+4. Maintained HTTP API compatibility for Open WebUI while using MCP backend for GitMCP
+5. All v0.0.45 request body tolerance and v0.0.44 response formatting preserved
 
 Changes from v0.0.44:
 - PRESERVES: ALL existing v0.0.44 functionality and response formatting (1515 lines)
@@ -55,7 +69,7 @@ Multi-Server Configuration Format:
   "mcpServers": {
     "n8n": {"url": "https://n8n-mcp-server.com/mcp", "headers": {"Authorization": "Bearer token"}},
     "github": {"url": "https://github-mcp-server.com", "headers": {"Authorization": "Bearer ghp_token"}},
-    "filesystem": {"url": "https://filesystem-mcp-server.com"}
+    "gitmcp": {"url": "https://gitmcp.io/DC-AAIA/n8n-mcp"}
   }
 }
 
@@ -188,7 +202,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.45"  # CHANGED from v0.0.44: Updated version for Open WebUI request body tolerance fixes
+APP_VERSION = "0.0.46"  # CHANGED from v0.0.45: Updated version for GitMCP protocol integration fixes
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -471,6 +485,19 @@ def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = No
 
     return payload
 
+# ADDED v0.0.46: GitMCP-specific MCP protocol detection
+def _is_gitmcp_server(server_name: str, server_url: str) -> bool:
+    """Detect if server is GitMCP requiring proper MCP protocol instead of HTTP"""
+    # Check by server name
+    if server_name and server_name.lower() == "gitmcp":
+        return True
+
+    # Check by URL pattern
+    if server_url and "gitmcp.io" in server_url.lower():
+        return True
+
+    return False
+
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
         try:
@@ -628,8 +655,21 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
 
     logger.info("Discovering tools from server %s (%s) - auth: %s", server.name, server.url, "enabled" if "Authorization" in headers else "disabled")
 
+    # ADDED v0.0.46: Use proper MCP protocol for GitMCP servers
+    if _is_gitmcp_server(server.name, server.url):
+        logger.info("Detected GitMCP server %s - using MCP client protocol instead of HTTP", server.name)
+        try:
+            # Use MCP client protocol directly for GitMCP (like Claude Desktop)
+            async with _connector_wrapper(server.url) as (reader, writer):
+                tools = await list_mcp_tools(reader, writer)
+                logger.info("Discovered %d tools from GitMCP server %s via MCP protocol", len(tools), server.name)
+                return tools
+        except Exception as e:
+            logger.error("GitMCP MCP protocol connection failed for server %s: %s", server.name, e)
+            return []
+
     try:
-        # Try direct HTTP first (primary method)
+        # Try direct HTTP first (primary method for non-GitMCP servers)
         tools = await discover_tools_via_http_fallback(server.url, headers)
         logger.info("Discovered %d tools from server %s via direct HTTP", len(tools), server.name)
         return tools
@@ -660,8 +700,21 @@ async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, argum
 
     logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
 
+    # ADDED v0.0.46: Use proper MCP protocol for GitMCP servers
+    if _is_gitmcp_server(server.name, server.url):
+        logger.debug("Using MCP protocol for GitMCP server %s tool %s", server.name, tool_name)
+        try:
+            # Use MCP client protocol directly for GitMCP (like Claude Desktop)
+            async with _connector_wrapper(server.url) as (reader, writer):
+                result = await call_mcp_tool(reader, writer, tool_name, arguments)
+                # FIXED v0.0.44: Apply consistent response formatting
+                return _format_tool_response(result)
+        except Exception as e:
+            logger.exception("GitMCP MCP protocol tool call failed for %s on %s: %s", tool_name, server.name, e)
+            raise HTTPException(status_code=502, detail=f"GitMCP MCP protocol connection failed: {str(e)}")
+
     try:
-        # Use direct HTTP first (proven working method)
+        # Use direct HTTP first (proven working method for non-GitMCP servers)
         result = await call_mcp_tool_via_http_fallback(server.url, headers, tool_name, arguments)
         # FIXED v0.0.44: Apply consistent response formatting
         return _format_tool_response(result)
