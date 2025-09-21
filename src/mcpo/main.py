@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.54 (Fix MCP protocol version mismatch)
+Open WebUI MCPO - main.py v0.0.55 (Fix ClientSession.initialize() call)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.54"  # CHANGED from v0.0.53: Updated version to Fix MCP protocol version mismatch
+APP_VERSION = "0.0.55"  # CHANGED from v0.0.54: Updated version to Fix ClientSession.initialize() call
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -822,15 +822,9 @@ class MCPRemoteManager:
                 read_stream, write_stream = await self.stdio_context.__aenter__()
                 self.session = ClientSession(read_stream, write_stream)
                 
-                # Initialize with protocol-specific parameters
-                await self.session.initialize(
-                    protocol_version=self.protocol_version,
-                    capabilities={},
-                    client_info={
-                        "name": self.client_name,
-                        "version": "0.0.54"
-                    }
-                )
+                # Initialize with standard parameters (no protocol_version param)
+                await self.session.initialize()
+                
                 logger.info(f"mcp-remote connection established successfully using {self.protocol_version}")
                 
         except asyncio.TimeoutError:
