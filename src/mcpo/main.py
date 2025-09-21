@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.50 (Fix STDIO_AVAILABLE to STDIOAVAILABLE)
+Open WebUI MCPO - main.py v0.0.51 (Fix ClientSession initialization with read/write streams)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.50"  # CHANGED from v0.0.48: Updated version to Fix Fix STDIO_AVAILABLE to STDIOAVAILABLE Issue 
+APP_VERSION = "0.0.51"  # CHANGED from v0.0.50: Updated version to Fix ClientSession initialization with read/write streams 
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -771,50 +771,28 @@ class MCPRemoteManager:
         self.transport = None
         self.session = None
 
-    async def start(self, url: str, auth_token: str):
-        """Start mcp-remote subprocess with HTTP authentication"""
+    async def start(self, url: str, authtoken: str):
         if not STDIOAVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
-
-        # MODIFIED v0.0.47: GitMCP doesn't require auth token for npx mcp-remote
-        # Build mcp-remote command - conditionally add auth header
-        if auth_token and auth_token != "dummy_token":
-            cmd = [
-                "npx", "-y", "mcp-remote",
-                url,
-                "--header", f"Authorization: Bearer {auth_token}"
-            ]
+        
+        if authtoken and authtoken != "dummytoken":
+            cmd = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
         else:
-            # GitMCP case - no auth header needed
-            cmd = [
-                "npx", "-y", "mcp-remote",
-                url
-            ]
-
-        logger.info("Starting mcp-remote subprocess for URL: %s", url)
-
-        # Start mcp-remote subprocess
+            cmd = ["npx", "-y", "mcp-remote", url]
+        
+        logger.info(f"Starting mcp-remote subprocess for URL: {url}")
+        
         self.process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-
-        # Create stdio transport to communicate with mcp-remote
-        self.transport = StdioClientTransport(
-            self.process.stdout,
-            self.process.stdin
-        )
-
-        # Create MCP session
-        self.session = ClientSession(self.transport)
-
-        # Initialize MCP connection
+        
+        self.session = ClientSession(self.process.stdout, self.process.stdin)
         await self.session.initialize()
-
         logger.info("mcp-remote connection established successfully")
-
+       
     async def stop(self):
         """Stop mcp-remote subprocess"""
         if self.session:
