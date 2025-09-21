@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.53 (add timeout protection to the GitMCP initialization)
+Open WebUI MCPO - main.py v0.0.54 (Fix MCP protocol version mismatch)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.53"  # CHANGED from v0.0.52: Updated version to add timeout protection to the GitMCP initialization
+APP_VERSION = "0.0.54"  # CHANGED from v0.0.53: Updated version to Fix MCP protocol version mismatch
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -778,29 +778,63 @@ class MCPRemoteManager:
         from mcp import StdioServerParameters
         from mcp.client.stdio import stdio_client
         
-        if authtoken and authtoken != "dummytoken":
-            cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
+        # Auto-detect GitMCP and configure appropriate protocol
+        if "gitmcp.io" in url.lower():
+            # GitMCP requires 2024-11-05 protocol with SSE transport
+            if authtoken and authtoken != "dummytoken":
+                cmd_args = [
+                    "npx", "-y", "mcp-remote", url,
+                    "--header", f"Authorization: Bearer {authtoken}",
+                    "--protocol-version", "2024-11-05",
+                    "--transport", "sse-only"
+                ]
+            else:
+                cmd_args = [
+                    "npx", "-y", "mcp-remote", url,
+                    "--protocol-version", "2024-11-05", 
+                    "--transport", "sse-only"
+                ]
+            self.protocol_version = "2024-11-05"
+            self.client_name = "mcpo-gitmcp-client"
         else:
-            cmd_args = ["npx", "-y", "mcp-remote", url]
+            # Standard MCP servers (like n8n) use modern protocol
+            if authtoken and authtoken != "dummytoken":
+                cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
+            else:
+                cmd_args = ["npx", "-y", "mcp-remote", url]
+            self.protocol_version = "2025-06-18"
+            self.client_name = "mcpo-client"
         
-        logger.info(f"Starting mcp-remote subprocess for URL: {url}")
+        logger.info(f"Starting mcp-remote subprocess for URL: {url} using protocol {self.protocol_version}")
         
         server_params = StdioServerParameters(
             command=cmd_args[0],
             args=cmd_args[1:],
-            env=None
+            env={
+                "MCP_PROTOCOL_VERSION": self.protocol_version,
+                "MCP_LEGACY_MODE": "true" if "gitmcp.io" in url.lower() else None
+            }
         )
         
         try:
-            # Add timeout protection for GitMCP initialization
-            async with asyncio.timeout(45):  # 45 second timeout
+            async with asyncio.timeout(45):
                 self.stdio_context = stdio_client(server_params)
                 read_stream, write_stream = await self.stdio_context.__aenter__()
                 self.session = ClientSession(read_stream, write_stream)
-                await self.session.initialize()
-                logger.info("mcp-remote connection established successfully")
+                
+                # Initialize with protocol-specific parameters
+                await self.session.initialize(
+                    protocol_version=self.protocol_version,
+                    capabilities={},
+                    client_info={
+                        "name": self.client_name,
+                        "version": "0.0.54"
+                    }
+                )
+                logger.info(f"mcp-remote connection established successfully using {self.protocol_version}")
+                
         except asyncio.TimeoutError:
-            logger.warning("GitMCP initialization timed out after 45 seconds - continuing without GitMCP")
+            logger.warning(f"GitMCP initialization timed out after 45 seconds - continuing without GitMCP")
             await self._cleanup_failed_connection()
             raise RuntimeError("GitMCP connection timeout")
         except Exception as e:
