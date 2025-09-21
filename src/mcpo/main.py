@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.47 (GitMCP NPX-Remote Wrapper Fix)
+Open WebUI MCPO - main.py v0.0.48 (custom_openapi() fix above to force all request bodies to be optional)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -216,7 +216,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.47"  # CHANGED from v0.0.46: Updated version for GitMCP NPX-remote wrapper fixes
+APP_VERSION = "0.0.48"  # CHANGED from v0.0.47: Updated version for custom_openapi() fix
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1590,17 +1590,26 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    components = schema.setdefault("components", {})
-    sec = components.setdefault("securitySchemes", {})
-    sec["apiKeyAuth"] = {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-api-key",
-    }
-
+    # 🔧 CRITICAL FIX: Force all request bodies to be optional for Open WebUI compatibility
     paths = schema.setdefault("paths", {})
-    post_tools_time = paths.setdefault("/tools/time", {}).setdefault("post", {})
-    post_tools_time.update({
+    for path, methods in paths.items():
+        for method, operation in methods.items():
+            if method.lower() == "post" and "requestBody" in operation:
+                # Force request body to be optional for Open WebUI compatibility
+                operation["requestBody"]["required"] = False
+                
+                # Ensure content schema allows empty objects
+                content = operation["requestBody"].get("content", {})
+                for media_type, schema_def in content.items():
+                    if "schema" in schema_def:
+                        # Allow empty objects and null values
+                        schema_def["schema"]["additionalProperties"] = True
+                        if "required" in schema_def["schema"]:
+                            # Make all properties optional
+                            schema_def["schema"]["required"] = []
+
+    # Add time tool to schema if not present
+    paths.setdefault("/tools/time", {}).setdefault("post", {}).update({
         "operationId": "mcpo_time",
         "summary": "Invoke the time tool",
         "requestBody": {
@@ -1627,10 +1636,16 @@ def custom_openapi():
             }
         },
         "security": [{"apiKeyAuth": []}],
-        "tags": ["tools"],
+        "tags": ["tools"]
     })
 
-    schema["security"] = [{"apiKeyAuth": []}]
+    # Ensure security scheme is properly configured
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})["apiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header", 
+        "name": "x-api-key"
+    }
 
     app.openapi_schema = schema
     return app.openapi_schema
