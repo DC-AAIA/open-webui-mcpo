@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.60 (let mcp-remote handle protocol negotiation)
+Open WebUI MCPO - main.py v0.0.61 (Match official GitMCP configuration exactly)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.60"  # CHANGED from v0.0.59: Updated version to let mcp-remote handle protocol negotiation
+APP_VERSION = "0.0.61"  # CHANGED from v0.0.60: Updated version to Match official GitMCP configuration exactly
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -778,23 +778,11 @@ class MCPRemoteManager:
         from mcp import StdioServerParameters
         from mcp.client.stdio import stdio_client
         
-        # Auto-detect GitMCP and configure appropriate protocol
+        # GitMCP uses standard mcp-remote without any flags (per official documentation)
         if "gitmcp.io" in url.lower():
-            # GitMCP requires 2024-11-05 protocol with SSE transport
-            if authtoken and authtoken != "dummytoken":
-                cmd_args = [
-                    "npx", "-y", "mcp-remote", url,
-                    "--header", f"Authorization: Bearer {authtoken}",
-                    "--protocol", "2024-11-05",        # FIXED: --protocol not --protocol-version
-                    "--transport", "sse-only"          # KEEP: This is working correctly
-                ]
-            else:
-                cmd_args = [
-                    "npx", "-y", "mcp-remote", url,
-                    "--protocol", "2024-11-05",        # FIXED: --protocol not --protocol-version
-                    "--transport", "sse-only"          # KEEP: This is working correctly
-                ]
-            self.protocol_version = "2024-11-05"
+            # GitMCP is a public service - no authentication or protocol flags needed
+            cmd_args = ["npx", "-y", "mcp-remote", url]
+            self.protocol_version = "auto-negotiated"
             self.client_name = "mcpo-gitmcp-client"
         else:                                           # ✅ FIXED INDENTATION
             # Standard MCP servers (like n8n) use modern protocol
