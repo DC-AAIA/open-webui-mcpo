@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.51 (Fix ClientSession initialization with read/write streams)
+Open WebUI MCPO - main.py v0.0.52 (Fix MCP client pattern)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.51"  # CHANGED from v0.0.50: Updated version to Fix ClientSession initialization with read/write streams 
+APP_VERSION = "0.0.52"  # CHANGED from v0.0.51: Updated version to Fix MCP client pattern
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -775,33 +775,47 @@ class MCPRemoteManager:
         if not STDIOAVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
         
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        
         if authtoken and authtoken != "dummytoken":
-            cmd = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
+            cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
         else:
-            cmd = ["npx", "-y", "mcp-remote", url]
+            cmd_args = ["npx", "-y", "mcp-remote", url]
         
         logger.info(f"Starting mcp-remote subprocess for URL: {url}")
         
-        self.process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+        server_params = StdioServerParameters(
+            command=cmd_args[0],
+            args=cmd_args[1:],
+            env=None
         )
         
-        self.session = ClientSession(self.process.stdout, self.process.stdin)
-        await self.session.initialize()
-        logger.info("mcp-remote connection established successfully")
-       
+        try:
+            self.stdio_context = stdio_client(server_params)
+            read_stream, write_stream = await self.stdio_context.__aenter__()
+            self.session = ClientSession(read_stream, write_stream)
+            await self.session.initialize()
+            logger.info("mcp-remote connection established successfully")
+        except Exception as e:
+            logger.error(f"Failed to establish mcp-remote connection: {e}")
+            raise
+           
     async def stop(self):
         """Stop mcp-remote subprocess"""
-        if self.session:
+        if hasattr(self, 'session') and self.session:
             try:
                 await self.session.close()
             except Exception as e:
                 logger.warning("Error closing MCP session: %s", e)
-
-        if self.process:
+        
+        if hasattr(self, 'stdio_context'):
+            try:
+                await self.stdio_context.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning("Error closing stdio context: %s", e)
+        
+        if hasattr(self, 'process') and self.process:
             try:
                 self.process.terminate()
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
@@ -811,10 +825,11 @@ class MCPRemoteManager:
                 await self.process.wait()
             except Exception as e:
                 logger.warning("Error stopping mcp-remote process: %s", e)
-
+        
         self.process = None
         self.transport = None
         self.session = None
+        self.stdio_context = None
 
     async def list_tools(self) -> List[ToolDef]:
         """List available tools via mcp-remote"""
