@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.55 (Fix ClientSession.initialize() call)
+Open WebUI MCPO - main.py v0.0.56 (Fix GitMCP Command Arguments)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.55"  # CHANGED from v0.0.54: Updated version to Fix ClientSession.initialize() call
+APP_VERSION = "0.0.56"  # CHANGED from v0.0.55: Updated version to Fix GitMCP Command Arguments
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -771,7 +771,7 @@ class MCPRemoteManager:
         self.transport = None
         self.session = None
 
-    async def start(self, url: str, authtoken: str):
+ async def start(self, url: str, authtoken: str):
         if not STDIOAVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
         
@@ -785,18 +785,18 @@ class MCPRemoteManager:
                 cmd_args = [
                     "npx", "-y", "mcp-remote", url,
                     "--header", f"Authorization: Bearer {authtoken}",
-                    "--protocol-version", "2024-11-05",
-                    "--transport", "sse-only"
+                    "--protocol", "2024-11-05",        # FIXED: --protocol not --protocol-version
+                    "--transport", "sse-only"          # KEEP: This is working correctly
                 ]
             else:
                 cmd_args = [
                     "npx", "-y", "mcp-remote", url,
-                    "--protocol-version", "2024-11-05", 
-                    "--transport", "sse-only"
+                    "--protocol", "2024-11-05",        # FIXED: --protocol not --protocol-version
+                    "--transport", "sse-only"          # KEEP: This is working correctly
                 ]
             self.protocol_version = "2024-11-05"
             self.client_name = "mcpo-gitmcp-client"
-        else:
+        else:                                           # ✅ FIXED INDENTATION
             # Standard MCP servers (like n8n) use modern protocol
             if authtoken and authtoken != "dummytoken":
                 cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
@@ -810,12 +810,15 @@ class MCPRemoteManager:
         server_params = StdioServerParameters(
             command=cmd_args[0],
             args=cmd_args[1:],
-            env={
-                "MCP_PROTOCOL_VERSION": self.protocol_version,
-                "MCP_LEGACY_MODE": "true" if "gitmcp.io" in url.lower() else None
-            }
+            env=None                                    # ✅ FIXED: Remove environment variables
         )
-        
+ 
+        # Enhanced logging for GitMCP debugging
+        if "gitmcp.io" in url.lower():
+            logger.info(f"GitMCP command: {' '.join(cmd_args)}")
+            logger.info("Expected protocol response: 2024-11-05 (not 2025-06-18)")
+            logger.info("GitMCP initialization starting - this may take 30-45 seconds...")
+ 
         try:
             async with asyncio.timeout(45):
                 self.stdio_context = stdio_client(server_params)
