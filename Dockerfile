@@ -25,6 +25,8 @@ COPY . /app
 ENV VIRTUAL_ENV=/app/.venv
 RUN uv venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Update MCP to latest version for StdioClientTransport compatibility
+RUN pip install --upgrade mcp>=1.13.0
 # Install mcpo from local source (pyproject.toml must be present)
 RUN uv pip install --reinstall --no-cache-dir . && rm -rf ~/.cache
 # Verify mcpo installed correctly
