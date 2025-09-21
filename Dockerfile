@@ -13,7 +13,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # One-time version check (optional diagnostics)
 RUN node -v && npm -v
 # Install MCP remote package for GitMCP support
-RUN npm install -g @modelcontextprotocol/server-stdio
+RUN npm install -g mcp-remote
 # CACHE BUST: put BEFORE COPY so subsequent layers rebuild
 ARG BUILD_REV=2025-08-20T12-59-00Z
 ENV BUILD_REV=${BUILD_REV}
