@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.49 (Fix mcpo v048 Validation Issue )
+Open WebUI MCPO - main.py v0.0.50 (Fix STDIO_AVAILABLE to STDIOAVAILABLE)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.49"  # CHANGED from v0.0.48: Updated version to Fix mcpo v048 Validation Issue 
+APP_VERSION = "0.0.50"  # CHANGED from v0.0.48: Updated version to Fix Fix STDIO_AVAILABLE to STDIOAVAILABLE Issue 
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -773,7 +773,7 @@ class MCPRemoteManager:
 
     async def start(self, url: str, auth_token: str):
         """Start mcp-remote subprocess with HTTP authentication"""
-        if not STDIO_AVAILABLE:
+        if not STDIOAVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
 
         # MODIFIED v0.0.47: GitMCP doesn't require auth token for npx mcp-remote
@@ -1433,7 +1433,7 @@ async def _setup_single_server(app: FastAPI):
             return
         except Exception as fe:
             logger.exception("MCP connector also failed: %s", fe)
-            if STDIO_AVAILABLE:
+            if STDIOAVAILABLE:
                 logger.warning("Trying mcp-remote as final fallback")
                 try:
                     auth_token = None
@@ -1671,7 +1671,7 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "alt_http_connect_available": bool(_ALT_HTTP_CONNECT is not None),
         "headers_configured": bool(MCP_HEADERS.strip()),
         "direct_http_fallback": "available",
-        "mcp_remote_fallback": "available" if STDIO_AVAILABLE else "disabled (StdioClientTransport not found)",
+        "mcp_remote_fallback": "available" if STDIOAVAILABLE else "disabled (StdioClientTransport not found)",
     }
 
     # ADDED v0.0.41: Multi-server diagnostics (only adds, never modifies existing)
