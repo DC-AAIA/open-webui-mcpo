@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.52 (Fix MCP client pattern)
+Open WebUI MCPO - main.py v0.0.53 (add timeout protection to the GitMCP initialization)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.52"  # CHANGED from v0.0.51: Updated version to Fix MCP client pattern
+APP_VERSION = "0.0.53"  # CHANGED from v0.0.52: Updated version to add timeout protection to the GitMCP initialization
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -792,15 +792,33 @@ class MCPRemoteManager:
         )
         
         try:
-            self.stdio_context = stdio_client(server_params)
-            read_stream, write_stream = await self.stdio_context.__aenter__()
-            self.session = ClientSession(read_stream, write_stream)
-            await self.session.initialize()
-            logger.info("mcp-remote connection established successfully")
+            # Add timeout protection for GitMCP initialization
+            async with asyncio.timeout(45):  # 45 second timeout
+                self.stdio_context = stdio_client(server_params)
+                read_stream, write_stream = await self.stdio_context.__aenter__()
+                self.session = ClientSession(read_stream, write_stream)
+                await self.session.initialize()
+                logger.info("mcp-remote connection established successfully")
+        except asyncio.TimeoutError:
+            logger.warning("GitMCP initialization timed out after 45 seconds - continuing without GitMCP")
+            await self._cleanup_failed_connection()
+            raise RuntimeError("GitMCP connection timeout")
         except Exception as e:
             logger.error(f"Failed to establish mcp-remote connection: {e}")
+            await self._cleanup_failed_connection()
             raise
-           
+
+    async def _cleanup_failed_connection(self):
+        """Clean up failed GitMCP connection resources"""
+        try:
+            if hasattr(self, 'stdio_context') and self.stdio_context:
+                await self.stdio_context.__aexit__(None, None, None)
+        except Exception as e:
+            logger.debug(f"Error during GitMCP cleanup: {e}")
+        finally:
+            self.stdio_context = None
+            self.session = None
+            
     async def stop(self):
         """Stop mcp-remote subprocess"""
         if hasattr(self, 'session') and self.session:
