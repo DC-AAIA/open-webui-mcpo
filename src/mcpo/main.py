@@ -771,7 +771,7 @@ class MCPRemoteManager:
         self.transport = None
         self.session = None
 
- async def start(self, url: str, authtoken: str):
+    async def start(self, url: str, authtoken: str):
         if not STDIOAVAILABLE:
             raise RuntimeError("StdioClientTransport not available - cannot use mcp-remote fallback")
         
