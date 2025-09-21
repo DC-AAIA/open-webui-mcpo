@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.49"  # CHANGED from v0.0.47: Updated version to Fix mcpo v048 Validation Issue 
+APP_VERSION = "0.0.49"  # CHANGED from v0.0.48: Updated version to Fix mcpo v048 Validation Issue 
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
