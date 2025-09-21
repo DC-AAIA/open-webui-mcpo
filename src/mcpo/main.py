@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.57 (Python ClientSession protocol override)
+Open WebUI MCPO - main.py v0.0.58 (Fix the GitMCP initialization)
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -224,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.57"  # CHANGED from v0.0.56: Updated version to add Python ClientSession protocol override
+APP_VERSION = "0.0.58"  # CHANGED from v0.0.57: Updated version to Fix the GitMCP initialization
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -825,19 +825,9 @@ class MCPRemoteManager:
                 read_stream, write_stream = await self.stdio_context.__aenter__()
                 self.session = ClientSession(read_stream, write_stream)
                 
-                # Initialize with explicit protocol version for GitMCP compatibility
-                if "gitmcp.io" in url.lower():
-                    # GitMCP requires explicit 2024-11-05 protocol version
-                    await self.session.initialize(
-                        protocol_version="2024-11-05",
-                        capabilities={},
-                        client_info={"name": self.client_name, "version": "1.0.0"}
-                    )
-                    logger.info("GitMCP initialized with protocol version 2024-11-05")
-                else:
-                    # Standard MCP servers use default latest protocol
-                    await self.session.initialize()
-                    logger.info("Standard MCP server initialized with default protocol")
+                # Initialize MCP session (protocol negotiation handled internally)
+                await self.session.initialize()
+                logger.info(f"MCP session initialized for {url}")
                 
                 logger.info(f"mcp-remote connection established successfully using {self.protocol_version}")
                 
