@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.48 (custom_openapi() fix above to force all request bodies to be optional)
+Open WebUI MCPO - main.py v0.0.49 (Fix mcpo v048 Validation Issue )
 
 Changes from v0.0.46:
 - PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
@@ -122,15 +122,23 @@ from mcp.shared.exceptions import McpError
 # Try to import stdio transport - may not be available in all MCP versions
 try:
     from mcp.client.stdio import StdioClientTransport
-    STDIO_AVAILABLE = True
+    STDIOAVAILABLE = True
 except ImportError:
     try:
-        from mcp.client.stdio import StdioServerTransport as StdioClientTransport
-        STDIO_AVAILABLE = True
+        # Try alternative import paths for different MCP versions
+        from mcp.client.stdio import stdio_client as StdioClientTransport
+        STDIOAVAILABLE = True
     except ImportError:
-        STDIO_AVAILABLE = False
-        logger = logging.getLogger("mcpo")
-        logger.warning("StdioClientTransport not available - mcp-remote fallback disabled")
+        try:
+            from mcp.client import StdioClientTransport
+            STDIOAVAILABLE = True
+        except ImportError:
+            try:
+                from mcp import StdioClientTransport
+                STDIOAVAILABLE = True
+            except ImportError:
+                STDIOAVAILABLE = False
+                logger.warning("StdioClientTransport not available - mcp-remote fallback disabled")
 
 def resolve_http_connector():
     mcp_version = None
@@ -216,7 +224,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.48"  # CHANGED from v0.0.47: Updated version for custom_openapi() fix
+APP_VERSION = "0.0.49"  # CHANGED from v0.0.47: Updated version to Fix mcpo v048 Validation Issue 
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
