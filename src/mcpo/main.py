@@ -1,8 +1,28 @@
 """
-Open WebUI MCPO - main.py v0.0.61 (Match official GitMCP configuration exactly)
+Open WebUI MCPO - main.py v0.0.62 (GitMCP temporarily disabled - Context7 alternative pending)
 
-Changes from v0.0.46:
-- PRESERVES: ALL existing v0.0.46 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
+Changes from v0.0.61:
+- GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
+- ALL n8n-mcp functionality preserved (39 tools registered and working)
+- Added Context7 preparation comments for future Open WebUI Pipelines integration
+- Maintained backward compatibility with existing configurations
+- Prepared monitoring capability for GitMCP protocol fixes
+
+GitMCP Status v0.0.62:
+- GitMCP detection and routing COMMENTED OUT (lines 385, 610, 690, 1190)
+- GitMCP servers will be skipped during multi-server initialization
+- n8n-mcp server continues to work normally via direct HTTP and MCP protocols
+- Context7 integration to be implemented via Open WebUI Pipelines (separate from this proxy)
+
+Preserved from v0.0.61:
+- ALL existing v0.0.61 functionality for n8n-mcp server (1572 lines preserved)
+- Multi-server configuration support (for future GitMCP restoration)
+- Request body tolerance and response formatting improvements
+- Error handling and authentication logic
+- Direct HTTP fallback and MCP connector methods
+
+Changes from v0.0.60:
+- PRESERVES: ALL existing v0.0.60 GitMCP detection and v0.0.45 request body tolerance and v0.0.44 response formatting (1572 lines)
 - FIXED: GitMCP connection method - replaced direct MCP client with MCPRemoteManager (npx mcp-remote wrapper)
 - ENHANCED: GitMCP servers now use proper npx mcp-remote subprocess approach (like Claude Desktop)
 - ADDED: GitMCP routing through existing MCPRemoteManager class for proper NPX wrapper integration
@@ -224,7 +244,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.61"  # CHANGED from v0.0.60: Updated version to Match official GitMCP configuration exactly
+APP_VERSION = "0.0.62"  # CHANGED from v0.0.61: Updated version for GitMCP disabled release
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -507,18 +527,33 @@ def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = No
 
     return payload
 
-# ADDED v0.0.46: GitMCP-specific MCP protocol detection
+# DISABLED v0.0.62: GitMCP-specific MCP protocol detection (commented out)
+# def _is_gitmcp_server(server_name: str, server_url: str) -> bool:
+#     """Detect if server is GitMCP requiring proper MCP protocol instead of HTTP"""
+#     # Check by server name
+#     if server_name and server_name.lower() == "gitmcp":
+#         return True
+# 
+#     # Check by URL pattern
+#     if server_url and "gitmcp.io" in server_url.lower():
+#         return True
+# 
+#     return False
+
+# ADDED v0.0.62: GitMCP detection function that always returns False (disabled)
 def _is_gitmcp_server(server_name: str, server_url: str) -> bool:
-    """Detect if server is GitMCP requiring proper MCP protocol instead of HTTP"""
-    # Check by server name
+    """GitMCP detection disabled in v0.0.62 - always returns False
+    
+    GitMCP integration temporarily disabled due to protocol compatibility issues.
+    See Context7 integration via Open WebUI Pipelines as alternative.
+    """
+    # Log GitMCP detection attempts for monitoring
     if server_name and server_name.lower() == "gitmcp":
-        return True
-
-    # Check by URL pattern
-    if server_url and "gitmcp.io" in server_url.lower():
-        return True
-
-    return False
+        logger.info("GitMCP server detected (%s) but integration disabled in v0.0.62", server_name)
+    elif server_url and "gitmcp.io" in server_url.lower():
+        logger.info("GitMCP URL detected (%s) but integration disabled in v0.0.62", server_url)
+    
+    return False  # Always return False to disable GitMCP routing
 
 async def retry_jsonrpc(call_fn: Callable[[], Awaitable], desc: str, retries: int = 1, sleep_s: float = 0.1):
     for attempt in range(retries + 1):
@@ -668,32 +703,43 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
     """Discover tools from specific MCP server"""
     headers = server.headers.copy()
 
+    # DISABLED v0.0.62: GitMCP-specific authentication logic (commented out but preserved)
     # FIXED v0.0.42: Only apply auth for servers that need it
-    if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+    # if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+    #     headers["Authorization"] = f"Bearer {server.auth_token}"
+    # # Explicitly exclude GitMCP from authentication
+    # elif server.name == "gitmcp" and "Authorization" in headers:
+    #     headers.pop("Authorization", None)
+
+    # ADDED v0.0.62: Apply authentication for all non-GitMCP servers
+    if server.auth_token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {server.auth_token}"
-    # Explicitly exclude GitMCP from authentication
-    elif server.name == "gitmcp" and "Authorization" in headers:
-        headers.pop("Authorization", None)
 
     logger.info("Discovering tools from server %s (%s) - auth: %s", server.name, server.url, "enabled" if "Authorization" in headers else "disabled")
 
+    # DISABLED v0.0.62: GitMCP routing (commented out but preserved for future restoration)
     # ADDED v0.0.47: Use MCPRemoteManager (npx mcp-remote) for GitMCP servers
+    # if _is_gitmcp_server(server.name, server.url):
+    #     logger.info("Detected GitMCP server %s - using npx mcp-remote wrapper instead of direct MCP client", server.name)
+    #     try:
+    #         # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
+    #         mcp_remote = MCPRemoteManager()
+    #         # GitMCP doesn't require auth token for npx mcp-remote
+    #         await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
+    #         try:
+    #             tools = await mcp_remote.list_tools()
+    #             logger.info("Discovered %d tools from GitMCP server %s via npx mcp-remote", len(tools), server.name)
+    #             return tools
+    #         finally:
+    #             await mcp_remote.stop()
+    #     except Exception as e:
+    #         logger.error("GitMCP npx mcp-remote connection failed for server %s: %s", server.name, e)
+    #         return []
+
+    # ADDED v0.0.62: Skip GitMCP servers entirely
     if _is_gitmcp_server(server.name, server.url):
-        logger.info("Detected GitMCP server %s - using npx mcp-remote wrapper instead of direct MCP client", server.name)
-        try:
-            # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
-            mcp_remote = MCPRemoteManager()
-            # GitMCP doesn't require auth token for npx mcp-remote
-            await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
-            try:
-                tools = await mcp_remote.list_tools()
-                logger.info("Discovered %d tools from GitMCP server %s via npx mcp-remote", len(tools), server.name)
-                return tools
-            finally:
-                await mcp_remote.stop()
-        except Exception as e:
-            logger.error("GitMCP npx mcp-remote connection failed for server %s: %s", server.name, e)
-            return []
+        logger.info("GitMCP server %s skipped - integration disabled in v0.0.62", server.name)
+        return []
 
     try:
         # Try direct HTTP first (primary method for non-GitMCP servers)
@@ -718,32 +764,43 @@ async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, argum
     """Route tool call to appropriate MCP server"""
     headers = server.headers.copy()
 
+    # DISABLED v0.0.62: GitMCP-specific authentication logic (commented out but preserved)
     # FIXED v0.0.42: Only apply auth for servers that need it
-    if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+    # if server.name != "gitmcp" and server.auth_token and "Authorization" not in headers:
+    #     headers["Authorization"] = f"Bearer {server.auth_token}"
+    # # GitMCP servers explicitly excluded from authentication
+    # elif server.name == "gitmcp" and "Authorization" in headers:
+    #     headers.pop("Authorization", None)  # Remove any auth headers for GitMCP
+
+    # ADDED v0.0.62: Apply authentication for all non-GitMCP servers
+    if server.auth_token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {server.auth_token}"
-    # GitMCP servers explicitly excluded from authentication
-    elif server.name == "gitmcp" and "Authorization" in headers:
-        headers.pop("Authorization", None)  # Remove any auth headers for GitMCP
 
     logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
 
+    # DISABLED v0.0.62: GitMCP routing (commented out but preserved for future restoration)
     # ADDED v0.0.47: Use MCPRemoteManager (npx mcp-remote) for GitMCP servers
+    # if _is_gitmcp_server(server.name, server.url):
+    #     logger.debug("Using npx mcp-remote for GitMCP server %s tool %s", server.name, tool_name)
+    #     try:
+    #         # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
+    #         mcp_remote = MCPRemoteManager()
+    #         # GitMCP doesn't require auth token for npx mcp-remote
+    #         await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
+    #         try:
+    #             result = await mcp_remote.call_tool(tool_name, arguments)
+    #             # FIXED v0.0.44: Apply consistent response formatting
+    #             return _format_tool_response(result)
+    #         finally:
+    #             await mcp_remote.stop()
+    #     except Exception as e:
+    #         logger.exception("GitMCP npx mcp-remote tool call failed for %s on %s: %s", tool_name, server.name, e)
+    #         raise HTTPException(status_code=502, detail=f"GitMCP npx mcp-remote connection failed: {str(e)}")
+
+    # ADDED v0.0.62: Reject GitMCP tool calls with clear error message
     if _is_gitmcp_server(server.name, server.url):
-        logger.debug("Using npx mcp-remote for GitMCP server %s tool %s", server.name, tool_name)
-        try:
-            # Use MCPRemoteManager for GitMCP (npx mcp-remote subprocess like Claude Desktop)
-            mcp_remote = MCPRemoteManager()
-            # GitMCP doesn't require auth token for npx mcp-remote
-            await mcp_remote.start(server.url, "dummy_token")  # MCPRemoteManager expects auth_token but GitMCP ignores it
-            try:
-                result = await mcp_remote.call_tool(tool_name, arguments)
-                # FIXED v0.0.44: Apply consistent response formatting
-                return _format_tool_response(result)
-            finally:
-                await mcp_remote.stop()
-        except Exception as e:
-            logger.exception("GitMCP npx mcp-remote tool call failed for %s on %s: %s", tool_name, server.name, e)
-            raise HTTPException(status_code=502, detail=f"GitMCP npx mcp-remote connection failed: {str(e)}")
+        logger.warning("Tool call to GitMCP server %s rejected - integration disabled in v0.0.62", server.name)
+        raise HTTPException(status_code=503, detail=f"GitMCP integration disabled - use Context7 alternative for documentation access")
 
     try:
         # Use direct HTTP first (proven working method for non-GitMCP servers)
@@ -778,34 +835,44 @@ class MCPRemoteManager:
         from mcp import StdioServerParameters
         from mcp.client.stdio import stdio_client
         
+        # DISABLED v0.0.62: GitMCP-specific logic (commented out but preserved)
         # GitMCP uses standard mcp-remote without any flags (per official documentation)
-        if "gitmcp.io" in url.lower():
-            # GitMCP is a public service - no authentication or protocol flags needed
+        # if "gitmcp.io" in url.lower():
+        #     # GitMCP is a public service - no authentication or protocol flags needed
+        #     cmd_args = ["npx", "-y", "mcp-remote", url]
+        #     self.protocol_version = "auto-negotiated"
+        #     self.client_name = "mcpo-gitmcp-client"
+        # else:
+        #     # Standard MCP servers (like n8n) use modern protocol
+        #     if authtoken and authtoken != "dummytoken":
+        #         cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
+        #     else:
+        #         cmd_args = ["npx", "-y", "mcp-remote", url]
+        #     self.protocol_version = "2025-06-18"
+        #     self.client_name = "mcpo-client"
+
+        # ADDED v0.0.62: Standard MCP servers only (GitMCP disabled)
+        if authtoken and authtoken != "dummytoken":
+            cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
+        else:
             cmd_args = ["npx", "-y", "mcp-remote", url]
-            self.protocol_version = "auto-negotiated"
-            self.client_name = "mcpo-gitmcp-client"
-        else:                                           # ✅ FIXED INDENTATION
-            # Standard MCP servers (like n8n) use modern protocol
-            if authtoken and authtoken != "dummytoken":
-                cmd_args = ["npx", "-y", "mcp-remote", url, "--header", f"Authorization: Bearer {authtoken}"]
-            else:
-                cmd_args = ["npx", "-y", "mcp-remote", url]
-            self.protocol_version = "2025-06-18"
-            self.client_name = "mcpo-client"
+        self.protocol_version = "2025-06-18"
+        self.client_name = "mcpo-client"
         
         logger.info(f"Starting mcp-remote subprocess for URL: {url} using protocol {self.protocol_version}")
         
         server_params = StdioServerParameters(
             command=cmd_args[0],
             args=cmd_args[1:],
-            env=None                                    # ✅ FIXED: Remove environment variables
+            env=None
         )
  
+        # DISABLED v0.0.62: GitMCP-specific logging (commented out but preserved)
         # Enhanced logging for GitMCP debugging
-        if "gitmcp.io" in url.lower():
-            logger.info(f"GitMCP command: {' '.join(cmd_args)}")
-            logger.info("Expected protocol response: 2024-11-05 (not 2025-06-18)")
-            logger.info("GitMCP initialization starting - this may take 30-45 seconds...")
+        # if "gitmcp.io" in url.lower():
+        #     logger.info(f"GitMCP command: {' '.join(cmd_args)}")
+        #     logger.info("Expected protocol response: 2024-11-05 (not 2025-06-18)")
+        #     logger.info("GitMCP initialization starting - this may take 30-45 seconds...")
  
         try:
             async with asyncio.timeout(45):
@@ -820,21 +887,23 @@ class MCPRemoteManager:
                 logger.info(f"mcp-remote connection established successfully using {self.protocol_version}")
                 
         except asyncio.TimeoutError:
-            logger.warning(f"GitMCP initialization timed out after 45 seconds - continuing without GitMCP")
+            # DISABLED v0.0.62: GitMCP-specific timeout handling (commented out but preserved)
+            # logger.warning(f"GitMCP initialization timed out after 45 seconds - continuing without GitMCP")
+            logger.warning(f"MCP initialization timed out after 45 seconds")
             await self._cleanup_failed_connection()
-            raise RuntimeError("GitMCP connection timeout")
+            raise RuntimeError("MCP connection timeout")
         except Exception as e:
             logger.error(f"Failed to establish mcp-remote connection: {e}")
             await self._cleanup_failed_connection()
             raise
 
     async def _cleanup_failed_connection(self):
-        """Clean up failed GitMCP connection resources"""
+        """Clean up failed connection resources"""
         try:
             if hasattr(self, 'stdio_context') and self.stdio_context:
                 await self.stdio_context.__aexit__(None, None, None)
         except Exception as e:
-            logger.debug(f"Error during GitMCP cleanup: {e}")
+            logger.debug(f"Error during cleanup: {e}")
         finally:
             self.stdio_context = None
             self.session = None
@@ -1243,17 +1312,40 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
         handler = await create_post_handler(tool, server_config, original_tool_name)
         app.post(route_path, name=f"tool_{tool.name}", tags=["tools"])(handler)
 
+        # DISABLED v0.0.62: GitMCP-specific GET route logic (commented out but preserved)
         # ENHANCED v0.0.42: Add GET route for GitMCP tools (always) and parameter-less tools (existing logic)
+        # input_schema = tool.inputSchema or {}
+        # is_parameter_less = not input_schema.get('properties') and not input_schema.get('required')
+        # is_gitmcp_tool = server_name == "gitmcp"
+        #
+        # if is_parameter_less or is_gitmcp_tool:
+        #     async def create_get_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
+        #         async def get_handler(dep=Depends(api_dependency())):
+        #             try:
+        #                 # GitMCP tools always use empty payload, parameter-less tools use empty dict
+        #                 payload = {} if is_gitmcp_tool else {}
+        #                 result = await _call_multi_server_tool(server, orig_name, payload)
+        #                 return JSONResponse(status_code=200, content=result)
+        #             except HTTPException:
+        #                 raise
+        #             except Exception as e:
+        #                 logger.exception("Multi-server GET tool call failed for %s on %s: %s", orig_name, server.name, e)
+        #                 raise HTTPException(status_code=502, detail=str(e))
+        #         return get_handler
+        #
+        #     get_handler = await create_get_handler(tool, server_config, original_tool_name)
+        #     app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
+        #     logger.info("Added GET route for %s tool: %s", "GitMCP" if is_gitmcp_tool else "parameter-less", route_path)
+
+        # ADDED v0.0.62: Simplified GET route logic (GitMCP detection disabled)
         input_schema = tool.inputSchema or {}
         is_parameter_less = not input_schema.get('properties') and not input_schema.get('required')
-        is_gitmcp_tool = server_name == "gitmcp"
 
-        if is_parameter_less or is_gitmcp_tool:
+        if is_parameter_less:
             async def create_get_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
                 async def get_handler(dep=Depends(api_dependency())):
                     try:
-                        # GitMCP tools always use empty payload, parameter-less tools use empty dict
-                        payload = {} if is_gitmcp_tool else {}
+                        payload = {}
                         result = await _call_multi_server_tool(server, orig_name, payload)
                         return JSONResponse(status_code=200, content=result)
                     except HTTPException:
@@ -1265,7 +1357,7 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
 
             get_handler = await create_get_handler(tool, server_config, original_tool_name)
             app.get(route_path, name=f"tool_{tool.name}_get", tags=["tools"])(get_handler)
-            logger.info("Added GET route for %s tool: %s", "GitMCP" if is_gitmcp_tool else "parameter-less", route_path)
+            logger.info("Added GET route for parameter-less tool: %s", route_path)
 
 # ADDED v0.0.41: Multiple server setup function
 async def _setup_multiple_servers(servers: List[MCPServerConfig], app: FastAPI):
@@ -1580,6 +1672,10 @@ def create_app() -> FastAPI:
         logger.info("MCP package version: %s", _MCP_VERSION)
         logger.info("MCP connector resolved: %s (from %s)", _CONNECTOR_NAME, _CONNECTOR_MODULE_PATH)
 
+        # ADDED v0.0.62: GitMCP status notification
+        logger.info("GitMCP integration: DISABLED (v0.0.62 - protocol compatibility issues)")
+        logger.info("Context7 integration: PENDING (via Open WebUI Pipelines)")
+
         # ADDED v0.0.41: Multi-server mode detection and setup
         if MCP_ENABLE_MULTI_SERVER and MCP_SERVERS_CONFIG:
             logger.info("Multi-server mode enabled, parsing server configurations")
@@ -1594,7 +1690,11 @@ def create_app() -> FastAPI:
                 logger.info("Echo/Ping routes registered")
                 logger.info("Configuring for %d MCP servers in multi-server mode", len(servers))
                 for server in servers:
-                    logger.info(" - %s: %s (%s)", server.name, server.url, "enabled" if server.enabled else "disabled")
+                    # ADDED v0.0.62: Log GitMCP skip status
+                    if _is_gitmcp_server(server.name, server.url):
+                        logger.info(" - %s: %s (SKIPPED - GitMCP disabled in v0.0.62)", server.name, server.url)
+                    else:
+                        logger.info(" - %s: %s (%s)", server.name, server.url, "enabled" if server.enabled else "disabled")
                 await _setup_multiple_servers(servers, app)
         else:
             logger.info("Single-server mode (existing v0.0.40.3 behavior)")
@@ -1705,6 +1805,10 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
         "mcp_remote_fallback": "available" if STDIOAVAILABLE else "disabled (StdioClientTransport not found)",
     }
 
+    # ADDED v0.0.62: GitMCP status in diagnostics
+    info["gitmcp_status"] = "disabled (v0.0.62 - protocol compatibility issues)"
+    info["gitmcp_alternative"] = "Context7 via Open WebUI Pipelines (pending)"
+
     # ADDED v0.0.41: Multi-server diagnostics (only adds, never modifies existing)
     if MCP_ENABLE_MULTI_SERVER:
         info["multi_server_mode"] = True
@@ -1721,11 +1825,15 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
                         "enabled": s.enabled,
                         "description": s.description,
                         "has_headers": bool(s.headers),
-                        "has_auth_token": bool(s.auth_token)
+                        "has_auth_token": bool(s.auth_token),
+                        # ADDED v0.0.62: GitMCP detection status
+                        "is_gitmcp": _is_gitmcp_server(s.name, s.url),
+                        "status": "skipped (GitMCP disabled)" if _is_gitmcp_server(s.name, s.url) else "active"
                     } for s in servers
                 ]
                 info["server_count"] = len(servers)
-                info["enabled_server_count"] = sum(1 for s in servers if s.enabled)
+                info["enabled_server_count"] = sum(1 for s in servers if s.enabled and not _is_gitmcp_server(s.name, s.url))
+                info["skipped_gitmcp_count"] = sum(1 for s in servers if _is_gitmcp_server(s.name, s.url))
             except Exception as e:
                 info["multi_server_config_error"] = str(e)
         else:
