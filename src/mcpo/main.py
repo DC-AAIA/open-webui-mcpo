@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.63 (resolves the final integration issue between Open WebUI v0.6.30 and mcpo v0.0.62, enabling successful MCP tool calls)Open WebUI MCPO - main.py v0.0.62 (GitMCP temporarily disabled - Context7 alternative pending)
+Open WebUI MCPO - main.py v0.0.63 (resolves the final integration issue between Open WebUI v0.6.30 and mcpo v0.0.62, enabling successful MCP tool calls)
 
 Changes from v0.0.61:
 - GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
