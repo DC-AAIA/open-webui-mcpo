@@ -1,7 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.62 (GitMCP temporarily disabled - Context7 alternative pending)
-
-Changes from v0.0.61:
+Open WebUI MCPO - main.py v0.0.63 (resolves the final integration issue between Open WebUI v0.6.30 and mcpo v0.0.62, enabling successful MCP tool calls)
 - GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
 - ALL n8n-mcp functionality preserved (39 tools registered and working)
 - Added Context7 preparation comments for future Open WebUI Pipelines integration
@@ -244,7 +242,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.62"  # CHANGED from v0.0.61: Updated version for GitMCP disabled release
+APP_VERSION = "0.0.63"  # CHANGED from v0.0.62: Updated version enabling successful MCP tool calls
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1444,7 +1442,7 @@ async def _setup_single_server(app: FastAPI):
             route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
             logger.info("Registering route: %s", route_path)
 
-            async def handler(payload: Optional[Dict[str, Any]] = Body(None), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+            async def handler(payload: Optional[Dict[str, Any]] = Body(default={}, embed=False), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                 try:
                     # ENHANCED v0.0.45: Better empty body handling with schema-aware defaults
                     if payload is None:
