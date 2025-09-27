@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.63 (resolves the final integration issue between Open WebUI v0.6.30 and mcpo v0.0.62, enabling successful MCP tool calls)
+Open WebUI MCPO - main.py v0.0.64 (resolves theFastAPI Empty JSON Object Validation Error in mutliple locations)
 
 Changes from v0.0.61:
 - GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
@@ -244,7 +244,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.63"  # CHANGED from v0.0.62: Updated version enabling successful MCP tool calls
+APP_VERSION = "0.0.64"  # CHANGED from v0.0.63: Fixed all FastAPI Body handlers for empty JSON
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1286,7 +1286,7 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
 
         # ENHANCED v0.0.43: Create POST handler with Open WebUI request processing
         async def create_post_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
-            async def handler(request: Request, payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
+            async def handler(request: Request, payload: Optional[Dict[str, Any]] = Body(default={}), dep=Depends(api_dependency())):
                 try:
                     # ADDED v0.0.43: Enhanced Open WebUI payload processing
                     processed_payload = await _process_open_webui_payload(request, payload)
@@ -1444,7 +1444,7 @@ async def _setup_single_server(app: FastAPI):
             route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
             logger.info("Registering route: %s", route_path)
 
-            async def handler(payload: Optional[Dict[str, Any]] = Body(default={}, embed=False), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+            async def handler(payload: Optional[Dict[str, Any]] = Body(default={}), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                 try:
                     # ENHANCED v0.0.45: Better empty body handling with schema-aware defaults
                     if payload is None:
@@ -1591,7 +1591,7 @@ async def _setup_single_server(app: FastAPI):
                                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                                 async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
                                     # FIXED v0.0.45: Accept optional payload to handle empty Open WebUI requests
-                                    async def handler(payload: Optional[Dict[str, Any]] = Body(None), dep=Depends(api_dependency())):
+                                    async def handler(payload: Optional[Dict[str, Any]] = Body(default={}), dep=Depends(api_dependency())):
                                         try:
                                             # Handle empty request bodies from Open WebUI
                                             if payload is None:
