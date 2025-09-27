@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.64 (resolves theFastAPI Empty JSON Object Validation Error in mutliple locations)
+Open WebUI MCPO - main.py v0.0.65 (Replace Body Parameters with Custom Dependency)
 
 Changes from v0.0.61:
 - GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
@@ -244,7 +244,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.64"  # CHANGED from v0.0.63: Fixed all FastAPI Body handlers for empty JSON
+APP_VERSION = "0.0.65"  # CHANGED from v0.0.64: Replace Body Parameters with Custom Dependency
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -526,6 +526,36 @@ def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = No
                     payload[param] = param_schema.get('default', '')
 
     return payload
+
+
+# ADDED v0.0.65: Custom request dependency to handle empty JSON bodies
+async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
+    """Parse request body with proper empty JSON handling for Open WebUI compatibility
+    
+    This completely bypasses FastAPI's Body validation to handle empty JSON objects
+    that would otherwise trigger 'JSON decode error: Expecting value' errors.
+    """
+    try:
+        body = await request.body()
+        if not body:
+            return {}
+        
+        content_type = request.headers.get("content-type", "").lower()
+        if "application/json" not in content_type:
+            return {}
+            
+        body_str = body.decode('utf-8')
+        if not body_str.strip():
+            return {}
+            
+        # This is the key fix - handle empty objects properly
+        if body_str.strip() == '{}':
+            return {}
+            
+        return json.loads(body_str)
+    except Exception as e:
+        logger.debug("Request body parsing failed: %s - returning empty dict", e)
+        return {}
 
 # DISABLED v0.0.62: GitMCP-specific MCP protocol detection (commented out)
 # def _is_gitmcp_server(server_name: str, server_url: str) -> bool:
@@ -1286,7 +1316,7 @@ async def _mount_multi_server_tool_routes(tools: List[ToolDef], servers: List[MC
 
         # ENHANCED v0.0.43: Create POST handler with Open WebUI request processing
         async def create_post_handler(tool_obj: ToolDef, server: MCPServerConfig, orig_name: str):
-            async def handler(request: Request, payload: Optional[Dict[str, Any]] = Body(default={}), dep=Depends(api_dependency())):
+            async def handler(request: Request, payload: Dict[str, Any] = Depends(parse_optional_json_body), dep=Depends(api_dependency())):
                 try:
                     # ADDED v0.0.43: Enhanced Open WebUI payload processing
                     processed_payload = await _process_open_webui_payload(request, payload)
@@ -1444,7 +1474,7 @@ async def _setup_single_server(app: FastAPI):
             route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
             logger.info("Registering route: %s", route_path)
 
-            async def handler(payload: Optional[Dict[str, Any]] = Body(default={}), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
+            async def handler(payload: Dict[str, Any] = Depends(parse_optional_json_body), _tool=tool, _route=route_path, dep=Depends(api_dependency())):
                 try:
                     # ENHANCED v0.0.45: Better empty body handling with schema-aware defaults
                     if payload is None:
@@ -1591,7 +1621,7 @@ async def _setup_single_server(app: FastAPI):
                                 route_path = f"{PATH_PREFIX.rstrip('/')}/tools/{tool.name}" if PATH_PREFIX != "/" else f"/tools/{tool.name}"
                                 async def create_mcp_remote_handler(tool_name: str, manager: MCPRemoteManager):
                                     # FIXED v0.0.45: Accept optional payload to handle empty Open WebUI requests
-                                    async def handler(payload: Optional[Dict[str, Any]] = Body(default={}), dep=Depends(api_dependency())):
+                                    async def handler(payload: Dict[str, Any] = Depends(parse_optional_json_body), dep=Depends(api_dependency())):
                                         try:
                                             # Handle empty request bodies from Open WebUI
                                             if payload is None:
