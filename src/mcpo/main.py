@@ -1,5 +1,19 @@
 """
-Open WebUI MCPO - main.py v0.0.65 (Replace Body Parameters with Custom Dependency)
+Open WebUI MCPO - main.py v0.0.66 (Fix Context7 Tool Invocation - Connection Method Tracking)
+
+Changes from v0.0.65:
+- FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
+- ADDED: SERVER_CONNECTION_METHODS global dict to track which connection method worked per server
+- ENHANCED: _discover_server_tools() now stores successful connection method for each server
+- IMPROVED: _call_multi_server_tool() uses the same connection method that worked during discovery
+- PRESERVED: ALL existing functionality for n8n-mcp and other working servers
+
+Tool Invocation Fix Applied:
+1. Added SERVER_CONNECTION_METHODS = {} to track connection method success per server
+2. Enhanced _discover_server_tools() to store successful method ("direct_http" or "mcp_connector")
+3. Modified _call_multi_server_tool() to check stored method and route accordingly
+4. Context7 servers that discovered tools via MCP connector now skip direct HTTP for tool calls
+5. Maintains full backward compatibility and existing fallback logic
 
 Changes from v0.0.61:
 - GitMCP integration temporarily disabled due to protocol compatibility issues (mcp-remote 0.1.29 hardcoded protocol version bug)
@@ -244,7 +258,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.65"  # CHANGED from v0.0.64: Replace Body Parameters with Custom Dependency
+APP_VERSION = "0.0.66"  # CHANGED from v0.0.65: Fix Context7 Tool Invocation - Connection Method Tracking
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -256,6 +270,8 @@ MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 # ADDED v0.0.41: Multi-server configuration environment variables
 MCP_SERVERS_CONFIG = os.getenv("MCP_SERVERS_CONFIG", "")  # JSON string of server configs
 MCP_ENABLE_MULTI_SERVER = os.getenv("MCP_ENABLE_MULTI_SERVER", "false").lower() == "true"
+# ADDED v0.0.66: Track successful connection methods per server for tool invocation
+SERVER_CONNECTION_METHODS = {}  # Dict[server_name, connection_method] - "direct_http" or "mcp_connector"
 
 def _parse_headers(hs: str) -> Dict[str, str]:
     """Parse header string into dict for httpx client.
@@ -771,10 +787,15 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
         logger.info("GitMCP server %s skipped - integration disabled in v0.0.62", server.name)
         return []
 
+    # Try direct HTTP first (primary method for non-GitMCP servers)
     try:
-        # Try direct HTTP first (primary method for non-GitMCP servers)
         tools = await discover_tools_via_http_fallback(server.url, headers)
         logger.info("Discovered %d tools from server %s via direct HTTP", len(tools), server.name)
+        
+        # ADDED v0.0.66: Track successful connection method
+        SERVER_CONNECTION_METHODS[server.name] = "direct_http"
+        logger.debug("Stored connection method for %s: direct_http", server.name)
+        
         return tools
     except Exception as e:
         logger.warning("Direct HTTP tool discovery failed for server %s: %s", server.name, e)
@@ -784,9 +805,18 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
             async with _connector_wrapper(server.url) as (reader, writer):
                 tools = await list_mcp_tools(reader, writer)
                 logger.info("Discovered %d tools from server %s via MCP connector", len(tools), server.name)
+                
+                # ADDED v0.0.66: Track successful connection method
+                SERVER_CONNECTION_METHODS[server.name] = "mcp_connector"
+                logger.debug("Stored connection method for %s: mcp_connector", server.name)
+                
                 return tools
         except Exception as fe:
             logger.error("All tool discovery methods failed for server %s: %s, %s", server.name, e, fe)
+            
+            # ADDED v0.0.66: Don't store connection method if both failed
+            SERVER_CONNECTION_METHODS.pop(server.name, None)
+            
             return []
 
 # ADDED v0.0.41: Multi-server tool execution
@@ -807,6 +837,36 @@ async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, argum
         headers["Authorization"] = f"Bearer {server.auth_token}"
 
     logger.debug("Calling tool %s on server %s (auth: %s)", tool_name, server.name, "enabled" if "Authorization" in headers else "disabled")
+    
+    # ADDED v0.0.66: Use the connection method that worked during discovery
+    stored_method = SERVER_CONNECTION_METHODS.get(server.name)
+    logger.debug("Server %s stored connection method: %s", server.name, stored_method)
+
+    if stored_method == "mcp_connector":
+        # Use MCP connector directly since it worked during discovery
+        logger.debug("Using MCP connector for %s (stored method)", server.name)
+        try:
+            async with _connector_wrapper(server.url) as (reader, writer):
+                result = await call_mcp_tool(reader, writer, tool_name, arguments)
+                # FIXED v0.0.44: Apply consistent response formatting
+                return _format_tool_response(result)
+        except Exception as e:
+            logger.exception("MCP connector tool call failed for %s on %s: %s", tool_name, server.name, e)
+            raise HTTPException(status_code=502, detail=f"MCP connector failed: {str(e)}")
+    
+    elif stored_method == "direct_http":
+        # Use direct HTTP since it worked during discovery
+        logger.debug("Using direct HTTP for %s (stored method)", server.name)
+        try:
+            result = await call_mcp_tool_via_http_fallback(server.url, headers, tool_name, arguments)
+            # FIXED v0.0.44: Apply consistent response formatting
+            return _format_tool_response(result)
+        except Exception as e:
+            logger.exception("Direct HTTP tool call failed for %s on %s: %s", tool_name, server.name, e)
+            raise HTTPException(status_code=502, detail=f"Direct HTTP failed: {str(e)}")
+    
+    # No stored method or unknown method - fall back to original logic
+    logger.warning("No stored connection method for server %s, using fallback logic", server.name)
 
     # DISABLED v0.0.62: GitMCP routing (commented out but preserved for future restoration)
     # ADDED v0.0.47: Use MCPRemoteManager (npx mcp-remote) for GitMCP servers
@@ -1838,6 +1898,10 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
     # ADDED v0.0.62: GitMCP status in diagnostics
     info["gitmcp_status"] = "disabled (v0.0.62 - protocol compatibility issues)"
     info["gitmcp_alternative"] = "Context7 via Open WebUI Pipelines (pending)"
+    
+    # ADDED v0.0.66: Connection method tracking diagnostics
+    info["connection_method_tracking"] = "enabled (v0.0.66)"
+    info["tracked_server_methods"] = dict(SERVER_CONNECTION_METHODS)
 
     # ADDED v0.0.41: Multi-server diagnostics (only adds, never modifies existing)
     if MCP_ENABLE_MULTI_SERVER:
@@ -1858,7 +1922,9 @@ def _collect_connector_diagnostics() -> Dict[str, Any]:
                         "has_auth_token": bool(s.auth_token),
                         # ADDED v0.0.62: GitMCP detection status
                         "is_gitmcp": _is_gitmcp_server(s.name, s.url),
-                        "status": "skipped (GitMCP disabled)" if _is_gitmcp_server(s.name, s.url) else "active"
+                        "status": "skipped (GitMCP disabled)" if _is_gitmcp_server(s.name, s.url) else "active",
+                        # ADDED v0.0.66: Connection method tracking per server
+                        "connection_method": SERVER_CONNECTION_METHODS.get(s.name, "not_tracked")
                     } for s in servers
                 ]
                 info["server_count"] = len(servers)
