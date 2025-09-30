@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.69 (GitHub Issue #13125 workaround for Context7 tools)
+Open WebUI MCPO - main.py v0.0.70 (GitHub Issue #13125 Final Library ID Correction)
 
 Changes from v0.0.65:
 - FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
@@ -258,7 +258,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.69"  # CHANGED from v0.0.68: GitHub Issue #13125 workaround for Context7 tools
+APP_VERSION = "0.0.70"  # CHANGED from v0.0.69: GitHub Issue #13125 Final Library ID Correction
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -582,7 +582,7 @@ async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
                 return {'libraryName': 'express'}
             elif 'context7_get-library-docs' in path:
                 logger.info("🔧 GitHub Issue #13125 Workaround: Forcing context7CompatibleLibraryID for get-library-docs")
-                return {'context7CompatibleLibraryID': '/express/express'}
+                return {'context7CompatibleLibraryID': '/expressjs/express'}
             
             logger.debug("Empty JSON object - returning empty dict (no Context7 tool detected)")
             return {}
