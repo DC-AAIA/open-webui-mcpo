@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.67 (Fix Bug Exposed in call_mcp_tool() Function)
+Open WebUI MCPO - main.py v0.0.68 (Add detailed logging to debug exactly where the parsing fails)
 
 Changes from v0.0.65:
 - FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
@@ -258,7 +258,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.67"  # CHANGED from v0.0.66: Fix Bug Exposed in call_mcp_tool() Function
+APP_VERSION = "0.0.68"  # CHANGED from v0.0.67: Add detailed logging to debug exactly where the parsing fails
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -546,31 +546,39 @@ def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = No
 
 # ADDED v0.0.65: Custom request dependency to handle empty JSON bodies
 async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
-    """Parse request body with proper empty JSON handling for Open WebUI compatibility
-    
-    This completely bypasses FastAPI's Body validation to handle empty JSON objects
-    that would otherwise trigger 'JSON decode error: Expecting value' errors.
-    """
+    """Parse request body with proper empty JSON handling for Open WebUI compatibility"""
     try:
         body = await request.body()
         if not body:
+            logger.debug("No request body - returning empty dict")
             return {}
-        
+            
         content_type = request.headers.get("content-type", "").lower()
         if "application/json" not in content_type:
+            logger.debug("Content-Type not JSON: %s - returning empty dict", content_type)
             return {}
             
         body_str = body.decode('utf-8')
+        logger.debug("Raw body string: %s", body_str[:200])  # Log first 200 chars
+        
         if not body_str.strip():
+            logger.debug("Empty body string - returning empty dict")
             return {}
             
         # This is the key fix - handle empty objects properly
         if body_str.strip() == '{}':
+            logger.debug("Empty JSON object - returning empty dict")
             return {}
             
-        return json.loads(body_str)
+        parsed = json.loads(body_str)
+        logger.debug("Successfully parsed JSON: %s", parsed)
+        return parsed
+        
+    except json.JSONDecodeError as jde:
+        logger.error("JSON decode error: %s - body was: %s", jde, body_str[:200])
+        return {}
     except Exception as e:
-        logger.debug("Request body parsing failed: %s - returning empty dict", e)
+        logger.error("Request body parsing failed: %s - returning empty dict", e)
         return {}
 
 # DISABLED v0.0.62: GitMCP-specific MCP protocol detection (commented out)
