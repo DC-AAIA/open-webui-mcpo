@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.66 (Fix Context7 Tool Invocation - Connection Method Tracking)
+Open WebUI MCPO - main.py v0.0.67 (Fix Bug Exposed in call_mcp_tool() Function)
 
 Changes from v0.0.65:
 - FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
@@ -258,7 +258,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.66"  # CHANGED from v0.0.65: Fix Context7 Tool Invocation - Connection Method Tracking
+APP_VERSION = "0.0.67"  # CHANGED from v0.0.66: Fix Bug Exposed in call_mcp_tool() Function
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1327,14 +1327,28 @@ async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) ->
         except HTTPException:
             raise
 
-        content = result.get("content") or []
+        # FIXED v0.0.67: Handle both dict and Pydantic CallToolResult objects
+        if isinstance(result, dict):
+            content = result.get("content") or []
+        elif hasattr(result, "content"):
+            content = getattr(result, "content", []) or []
+        else:
+            content = []
+
         # FIXED v0.0.44: Consistent response handling
         if not content:
             return {"result": ""}
 
         # Preserve content array structure for Open WebUI
         first = content[0] if content else {}
-        text = first.get("text") if isinstance(first, dict) else None
+        
+        # Handle both dict and Pydantic content items
+        if isinstance(first, dict):
+            text = first.get("text")
+        elif hasattr(first, "text"):
+            text = getattr(first, "text", None)
+        else:
+            text = None
 
         if text:
             try:
