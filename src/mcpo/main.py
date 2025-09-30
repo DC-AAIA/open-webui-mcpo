@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.68 (Add detailed logging to debug exactly where the parsing fails)
+Open WebUI MCPO - main.py v0.0.69 (GitHub Issue #13125 workaround for Context7 tools)
 
 Changes from v0.0.65:
 - FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
@@ -258,7 +258,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.68"  # CHANGED from v0.0.67: Add detailed logging to debug exactly where the parsing fails
+APP_VERSION = "0.0.69"  # CHANGED from v0.0.68: GitHub Issue #13125 workaround for Context7 tools
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -544,9 +544,13 @@ def _ensure_request_compatibility(payload: Any, tool_schema: Dict[str, Any] = No
     return payload
 
 
-# ADDED v0.0.65: Custom request dependency to handle empty JSON bodies
+# ADDED v0.0.69: GitHub Issue #13125 workaround for Context7 tools
 async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
-    """Parse request body with proper empty JSON handling for Open WebUI compatibility"""
+    """Parse request body with proper empty JSON handling for Open WebUI compatibility
+    
+    v069 ENHANCEMENT: GitHub Issue #13125 Workaround
+    Forces parameter population for Context7 tools when Open WebUI sends empty {} objects
+    """
     try:
         body = await request.body()
         if not body:
@@ -565,9 +569,22 @@ async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
             logger.debug("Empty body string - returning empty dict")
             return {}
             
-        # This is the key fix - handle empty objects properly
+        # v069 GITHUB ISSUE #13125 WORKAROUND: Force Context7 parameter population
         if body_str.strip() == '{}':
-            logger.debug("Empty JSON object - returning empty dict")
+            logger.debug("Empty JSON object detected - checking for Context7 tool workaround")
+            
+            # Extract tool name from request path
+            path = request.url.path
+            logger.debug("Request path: %s", path)
+            
+            if 'context7_resolve-library-id' in path:
+                logger.info("🔧 GitHub Issue #13125 Workaround: Forcing libraryName for resolve-library-id")
+                return {'libraryName': 'express'}
+            elif 'context7_get-library-docs' in path:
+                logger.info("🔧 GitHub Issue #13125 Workaround: Forcing context7CompatibleLibraryID for get-library-docs")
+                return {'context7CompatibleLibraryID': '/express/express'}
+            
+            logger.debug("Empty JSON object - returning empty dict (no Context7 tool detected)")
             return {}
             
         parsed = json.loads(body_str)
