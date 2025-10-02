@@ -1,5 +1,12 @@
 """
-Open WebUI MCPO - main.py v0.0.71 (GitHub Issue #13125 Remove the hardcoded Express workaround)
+Open WebUI MCPO - main.py v0.0.72 (OpenAPI Schema requestBody Injection Fix)
+
+Changes from v0.0.71:
+- FIXED: OpenAPI schema missing requestBody definitions for tool endpoints
+- ADDED: requestBody injection in custom_openapi() to populate tool parameter schemas
+- RESOLVED: GPT-4o Mini parameter population - LLM now sees required parameters in schema
+- ENHANCED: Tool inputSchema from _DISCOVERED_TOOLS_MIN injected into OpenAPI spec
+- PRESERVES: All request body optional for Open WebUI compatibility
 
 Changes from v0.0.70:
 - REMOVED: Hardcoded Express workaround in parse_optional_json_body (lines 578-582)
@@ -264,7 +271,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.71"  # CHANGED from v0.0.70: GitHub Issue #13125 Remove the hardcoded Express workaround
+APP_VERSION = "0.0.72"  # CHANGED from v0.0.71: OpenAPI Schema requestBody Injection Fix
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1869,6 +1876,31 @@ def custom_openapi():
                         if "required" in schema_def["schema"]:
                             # Make all properties optional
                             schema_def["schema"]["required"] = []
+
+    # ADDED v0.0.72: Inject requestBody schemas from discovered tools
+    # Fix for missing parameter definitions in OpenAPI schema
+    for path, methods in paths.items():
+        if path.startswith("/tools/") and "post" in methods:
+            operation = methods["post"]
+            
+            # Extract tool name from path (e.g., "/tools/context7_resolve-library-id")
+            tool_name = path.split("/tools/", 1)[1] if "/tools/" in path else None
+            
+            if tool_name:
+                # Find matching tool from discovered tools
+                matching_tool = next((t for t in _DISCOVERED_TOOLS_MIN if t.get("name") == tool_name), None)
+                
+                if matching_tool and matching_tool.get("inputSchema"):
+                    # Inject the proper requestBody schema from the tool's inputSchema
+                    operation["requestBody"] = {
+                        "required": False,  # Keep optional for Open WebUI compatibility
+                        "content": {
+                            "application/json": {
+                                "schema": matching_tool["inputSchema"]
+                            }
+                        }
+                    }
+                    logger.debug("Injected requestBody schema for tool: %s", tool_name)
 
     # Add time tool to schema if not present
     paths.setdefault("/tools/time", {}).setdefault("post", {}).update({
