@@ -1,5 +1,11 @@
 """
-Open WebUI MCPO - main.py v0.0.70 (GitHub Issue #13125 Final Library ID Correction)
+Open WebUI MCPO - main.py v0.0.71 (GitHub Issue #13125 Remove the hardcoded Express workaround)
+
+Changes from v0.0.70:
+- REMOVED: Hardcoded Express workaround in parse_optional_json_body (lines 578-582)
+- VERIFIED: Open WebUI middleware.py and tools.py fixes handle parameters correctly
+- FIXED: Context7 tools now work with any library (React, Vue, etc.) not just Express
+- RESOLVED: GPT-50 Mini hallucination issue - real data passes through from Context7
 
 Changes from v0.0.65:
 - FIXED: Context7 tool invocation failure by tracking successful connection methods during discovery
@@ -258,7 +264,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.70"  # CHANGED from v0.0.69: GitHub Issue #13125 Final Library ID Correction
+APP_VERSION = "0.0.71"  # CHANGED from v0.0.70: GitHub Issue #13125 Remove the hardcoded Express workaround
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -569,22 +575,10 @@ async def parse_optional_json_body(request: Request) -> Dict[str, Any]:
             logger.debug("Empty body string - returning empty dict")
             return {}
             
-        # v069 GITHUB ISSUE #13125 WORKAROUND: Force Context7 parameter population
+        # v071: Open WebUI now handles GitHub Issue #13125 via middleware.py and tools.py fixes
+        # Workaround removed - parameters pass through from Open WebUI correctly
         if body_str.strip() == '{}':
-            logger.debug("Empty JSON object detected - checking for Context7 tool workaround")
-            
-            # Extract tool name from request path
-            path = request.url.path
-            logger.debug("Request path: %s", path)
-            
-            if 'context7_resolve-library-id' in path:
-                logger.info("🔧 GitHub Issue #13125 Workaround: Forcing libraryName for resolve-library-id")
-                return {'libraryName': 'express'}
-            elif 'context7_get-library-docs' in path:
-                logger.info("🔧 GitHub Issue #13125 Workaround: Forcing context7CompatibleLibraryID for get-library-docs")
-                return {'context7CompatibleLibraryID': '/expressjs/express'}
-            
-            logger.debug("Empty JSON object - returning empty dict (no Context7 tool detected)")
+            logger.debug("Empty JSON object - passing through (Open WebUI handles parameters)")
             return {}
             
         parsed = json.loads(body_str)
