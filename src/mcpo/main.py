@@ -1,5 +1,10 @@
 """
-Open WebUI MCPO - main.py v0.0.72 (OpenAPI Schema requestBody Injection Fix)
+Open WebUI MCPO - main.py v0.0.73 (OpenAPI Schema requestBody Injection Fix)
+
+Changes from v0.0.72:
+- REMOVED: Placeholder "time" tool from OpenAPI schema (lines 1910-1939)
+- FIXED: Schema pollution causing LLM hallucination of non-existent mcpo_time tool
+- VALIDATED: Only real, registered tools appear in OpenAPI schema
 
 Changes from v0.0.71:
 - FIXED: OpenAPI schema missing requestBody definitions for tool endpoints
@@ -271,7 +276,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.72"  # CHANGED from v0.0.71: OpenAPI Schema requestBody Injection Fix
+APP_VERSION = "0.0.73"  # CHANGED from v0.0.72: Removed placeholder time tool from OpenAPI schema
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -1901,37 +1906,6 @@ def custom_openapi():
                         }
                     }
                     logger.debug("Injected requestBody schema for tool: %s", tool_name)
-
-    # Add time tool to schema if not present
-    paths.setdefault("/tools/time", {}).setdefault("post", {}).update({
-        "operationId": "mcpo_time",
-        "summary": "Invoke the time tool",
-        "requestBody": {
-            "required": False,
-            "content": {
-                "application/json": {
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "echo": {"type": "string"}
-                        }
-                    }
-                }
-            }
-        },
-        "responses": {
-            "200": {
-                "description": "Successful tool response",
-                "content": {
-                    "application/json": {
-                        "schema": {"type": "object"}
-                    }
-                }
-            }
-        },
-        "security": [{"apiKeyAuth": []}],
-        "tags": ["tools"]
-    })
 
     # Ensure security scheme is properly configured
     components = schema.setdefault("components", {})
