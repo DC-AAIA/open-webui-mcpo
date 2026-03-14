@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.73 (OpenAPI Schema requestBody Injection Fix)
+Open WebUI MCPO - main.py v0.0.74 (Fix: remove mcp-streamable-test fallback default)
 
 Changes from v0.0.72:
 - REMOVED: Placeholder "time" tool from OpenAPI schema (lines 1910-1939)
