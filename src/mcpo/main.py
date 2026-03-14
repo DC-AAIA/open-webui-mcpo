@@ -276,13 +276,13 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.73"  # CHANGED from v0.0.72: Removed placeholder time tool from OpenAPI schema
+APP_VERSION = "0.0.74"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 API_KEY = os.getenv("API_KEY", "changeme")
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp-streamable-test-production.up.railway.app/mcp")
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL")
 MCP_HEADERS = os.getenv("MCP_HEADERS", "")
 
 # ADDED v0.0.41: Multi-server configuration environment variables
