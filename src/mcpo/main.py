@@ -1,5 +1,5 @@
 """
-Open WebUI MCPO - main.py v0.0.74 (Fix: remove mcp-streamable-test fallback default)
+Open WebUI MCPO - main.py v0.0.75 (Fix: add Accept header for MCP streamable-http compatibility)
 
 Changes from v0.0.72:
 - REMOVED: Placeholder "time" tool from OpenAPI schema (lines 1910-1939)
@@ -276,7 +276,7 @@ except Exception:
     httpx = None
 
 APP_NAME = "Open WebUI MCPO"
-APP_VERSION = "0.0.74"
+APP_VERSION = "0.0.75"
 APP_DESCRIPTION = "Automatically generated API from MCP Tool Schemas"
 DEFAULT_PORT = int(os.getenv("PORT", "8080"))
 PATH_PREFIX = os.getenv("PATH_PREFIX", "/")
@@ -677,7 +677,8 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
         }
 
         logger.debug("Sending initialize request via direct HTTP fallback")
-        init_response = await client.post(url, json=init_payload, headers=headers)
+        request_headers = {**headers, "Accept": "application/json, text/event-stream"}
+        init_response = await client.post(url, json=init_payload, headers=request_headers)
 
         if init_response.status_code != 200:
             raise Exception(f"Direct HTTP initialize failed: {init_response.status_code} {init_response.text}")
@@ -694,7 +695,7 @@ async def discover_tools_via_http_fallback(url: str, headers: Dict[str, str]) ->
         }
 
         logger.debug("Requesting tools list via direct HTTP fallback")
-        tools_response = await client.post(url, json=tools_payload, headers=headers)
+        tools_response = await client.post(url, json=tools_payload, headers=request_headers)
 
         if tools_response.status_code != 200:
             raise Exception(f"Direct HTTP tools list failed: {tools_response.status_code} {tools_response.text}")
@@ -742,7 +743,8 @@ async def call_mcp_tool_via_http_fallback(url: str, headers: Dict[str, str], nam
             "id": 3
         }
 
-        response = await client.post(url, json=payload, headers=headers)
+        request_headers = {**headers, "Accept": "application/json, text/event-stream"}
+        response = await client.post(url, json=payload, headers=request_headers)
 
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=f"Direct HTTP tool call failed: {response.text}")
@@ -818,30 +820,22 @@ async def _discover_server_tools(server: MCPServerConfig) -> List[ToolDef]:
         logger.info("GitMCP server %s skipped - integration disabled in v0.0.62", server.name)
         return []
 
-    # Try direct HTTP first (primary method for non-GitMCP servers)
+    # Try MCP SDK connector first (handles SSE/streamable-http natively)
     try:
-        tools = await discover_tools_via_http_fallback(server.url, headers)
-        logger.info("Discovered %d tools from server %s via direct HTTP", len(tools), server.name)
-        
-        # ADDED v0.0.66: Track successful connection method
-        SERVER_CONNECTION_METHODS[server.name] = "direct_http"
-        logger.debug("Stored connection method for %s: direct_http", server.name)
-        
-        return tools
+        async with _connector_wrapper(server.url, headers) as (reader, writer):
+            tools = await list_mcp_tools(reader, writer)
+            logger.info("Discovered %d tools from server %s via MCP connector", len(tools), server.name)
+            SERVER_CONNECTION_METHODS[server.name] = "mcp_connector"
+            return tools
     except Exception as e:
-        logger.warning("Direct HTTP tool discovery failed for server %s: %s", server.name, e)
+        logger.warning("MCP connector tool discovery failed for server %s: %s", server.name, e)
 
-        # Fallback to MCP connector
+        # Fallback to direct HTTP
         try:
-            async with _connector_wrapper(server.url) as (reader, writer):
-                tools = await list_mcp_tools(reader, writer)
-                logger.info("Discovered %d tools from server %s via MCP connector", len(tools), server.name)
-                
-                # ADDED v0.0.66: Track successful connection method
-                SERVER_CONNECTION_METHODS[server.name] = "mcp_connector"
-                logger.debug("Stored connection method for %s: mcp_connector", server.name)
-                
-                return tools
+            tools = await discover_tools_via_http_fallback(server.url, headers)
+            logger.info("Discovered %d tools from server %s via direct HTTP", len(tools), server.name)
+            SERVER_CONNECTION_METHODS[server.name] = "direct_http"
+            return tools
         except Exception as fe:
             logger.error("All tool discovery methods failed for server %s: %s, %s", server.name, e, fe)
             
@@ -877,7 +871,7 @@ async def _call_multi_server_tool(server: MCPServerConfig, tool_name: str, argum
         # Use MCP connector directly since it worked during discovery
         logger.debug("Using MCP connector for %s (stored method)", server.name)
         try:
-            async with _connector_wrapper(server.url) as (reader, writer):
+            async with _connector_wrapper(server.url, headers) as (reader, writer):
                 result = await call_mcp_tool(reader, writer, tool_name, arguments)
                 # FIXED v0.0.44: Apply consistent response formatting
                 return _format_tool_response(result)
@@ -1139,9 +1133,12 @@ class MCPRemoteManager:
             raise HTTPException(status_code=502, detail=str(e))
 
 @asynccontextmanager
-async def _connector_wrapper(url: str):
+async def _connector_wrapper(url: str, headers: Dict[str, str] = None):
     if not _CONNECTOR_NAME.endswith("create_mcp_http_client"):
-        async with _CONNECTOR(url) as ctx:
+        kwargs = {}
+        if headers:
+            kwargs["headers"] = headers
+        async with _CONNECTOR(url, **kwargs) as ctx:
             if isinstance(ctx, tuple) and len(ctx) >= 2:
                 yield ctx[0], ctx[1]
             else:
@@ -1151,11 +1148,13 @@ async def _connector_wrapper(url: str):
     if _StreamableHTTPTransport is None or httpx is None:
         raise RuntimeError("MCP 1.13.0 transport adapter prerequisites missing (StreamableHTTPTransport/httpx)")
 
-    headers = _parse_headers(MCP_HEADERS)
+    merged_headers = _parse_headers(MCP_HEADERS) or {}
     if headers:
-        logger.info("MCP_HEADERS configured with keys: %s", list(headers.keys()))
+        merged_headers.update(headers)
+    if merged_headers:
+        logger.info("MCP_HEADERS configured with keys: %s", list(merged_headers.keys()))
 
-    client = httpx.AsyncClient(base_url=url, headers=headers)
+    client = httpx.AsyncClient(base_url=url, headers=merged_headers or None)
     transport = _StreamableHTTPTransport(client)
 
     def _extract_duplex(t):
@@ -1333,6 +1332,7 @@ async def list_mcp_tools(reader, writer) -> List[ToolDef]:
 async def call_mcp_tool(reader, writer, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     async with ClientSession(reader, writer) as session:
         try:
+            await session.initialize()
             resp = await session.call_tool(name=name, arguments=arguments)
         except McpError as me:
             # FIXED v0.0.44: Unified error response structure
