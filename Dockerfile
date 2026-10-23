@@ -25,12 +25,10 @@ COPY . /app
 ENV VIRTUAL_ENV=/app/.venv
 RUN uv venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-# Update MCP to latest version for StdioClientTransport compatibility
-RUN pip install --upgrade mcp>=1.13.0
-# Install mcpo from local source (pyproject.toml must be present)
-RUN uv pip install --reinstall --no-cache-dir . && rm -rf ~/.cache
-# Verify mcpo installed correctly
-RUN which mcpo
+# Install the project from its locked dependency set
+RUN uv sync --locked --no-dev && rm -rf ~/.cache
+# Verify imports and console script in the target interpreter
+RUN /app/.venv/bin/python -c "from mcp.client.session import ClientSession; from mcp.server.fastmcp import FastMCP; import mcpo.main" && which mcpo
 # Uvicorn in this repo listens on 8080 by default
 EXPOSE 8080
 # Entrypoint for container runs
