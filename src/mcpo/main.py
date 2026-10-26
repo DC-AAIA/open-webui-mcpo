@@ -1794,13 +1794,6 @@ def create_app() -> FastAPI:
         logger.info(" Hostname: %s", hostname)
         logger.info(" Port: %s", DEFAULT_PORT)
         logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")
-        try:
-            _mask = "<unset>"
-            if API_KEY:
-                _mask = f"{API_KEY[:4]}...{API_KEY[-4:]}" if len(API_KEY) >= 8 else "<short>"
-            logger.info(" API Key fingerprint (masked): %s", _mask)
-        except Exception:
-            logger.info(" API Key fingerprint (masked): <error>")
         logger.info(" CORS Allowed Origins: %s", CORS_ALLOWED_ORIGINS or "[]")
         logger.info(" Path Prefix: %s", PATH_PREFIX)
 
