@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import types
 import unittest
 from unittest import mock
 
@@ -56,6 +57,10 @@ class MemoryCustody:
         self.ready_calls = 0
         self.fail = False
 
+    def preflight(self):
+        if self.fail:
+            raise OSError("FAKE_CUSTODY_FAILURE")
+
     @contextlib.contextmanager
     def locked(self):
         yield self
@@ -86,6 +91,8 @@ class PrivateBackend:
         self.write_fail = False
         self.post_fail = False
         self.concurrent = False
+        self.probes = []
+        self.probe_fail = False
 
     def get_config(self):
         self.gets += 1
@@ -107,6 +114,11 @@ class PrivateBackend:
         self.value = copy.deepcopy(value)
         if self.post_fail:
             raise TimeoutError(NEW + OLD)
+
+    def probe_tools(self, key):
+        self.probes.append(key)
+        if self.probe_fail:
+            raise TimeoutError("FAKE_PROBE_UNKNOWN")
 
 
 class FakeActivation:
@@ -267,6 +279,188 @@ class PlanAExecutorEightCases(unittest.TestCase):
                 offenders.append(node.lineno)
         self.assertEqual(offenders, [], "Requirement: actual startup block must not slice/log API_KEY fragments")
         self.assertIn('logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")', source)
+
+    def cli_fixture(self, m, *, stage_ack=None, activate_ack=None, context_bad=False,
+                    owner_missing=False, guard_missing=False, probe_fail=False):
+        req = request()
+        d0 = req["expected_deployment"]
+        d1 = "bbbbbbbb-1111-2222-3333-bbbbbbbbbbbb"
+        workspace = "0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81"
+        events, calls = [], []
+        backend, custody = PrivateBackend(), MemoryCustody()
+        backend.probe_fail = probe_fail
+        owner = {"expected_target": req["expected_target"], "expected_source": req["expected_source"],
+                 "expected_deployment": d0, "selectors": req["selectors"],
+                 "qualification_reference": req["prerequisites"]["qualification_reference"],
+                 "repository": "DC-AAIA/open-webui-mcpo", "branch": "main", "workspace": workspace,
+                 "production_linked": True, "patched_source_active": True, "logging_protected": True,
+                 "exclusive_window": True, "complete_cohort": True, "private_admin_auth": True,
+                 "leaf_custody_qualified": True}
+        if owner_missing:
+            owner["patched_source_active"] = False
+        deployed = [False]
+
+        def status(deployment):
+            return {"id": req["expected_target"]["service"], "name": "open-webui-mcpo",
+                    "deploymentId": deployment, "status": "SUCCESS", "stopped": False}
+
+        def process(argv, **kwargs):
+            calls.append((list(argv), kwargs))
+            self.assertFalse(kwargs["shell"])
+            self.assertEqual(kwargs["cwd"], r"C:\Projects\open-webui-mcpo")
+            self.assertTrue(kwargs["capture_output"])
+            self.assertNotIn(JWT, str(argv)); self.assertNotIn(NEW, str(argv))
+            args = argv[1:]
+            if args == ["--version"]:
+                raw = "railway 4.40.0\n"
+            elif args == ["whoami", "--json"]:
+                raw = json.dumps({"id": "11111111-1111-1111-1111-111111111111", "name": "Synthetic",
+                                  "email": "synthetic@example.invalid", "workspaces": [{"id": workspace, "name": "Synthetic"}]})
+            elif args == ["status", "--json"]:
+                raw = json.dumps({"id": req["expected_target"]["project"], "workspace": {"name": "Synthetic"},
+                    "environments": {"edges": [{"node": {"id": req["expected_target"]["environment"],
+                    "canAccess": True, "deletedAt": None, "serviceInstances": {"edges": [{"node": {
+                    "serviceId": req["expected_target"]["service"], "environmentId": req["expected_target"]["environment"],
+                    "source": {"repo": "DC-AAIA/open-webui-mcpo", "image": None},
+                    "latestDeployment": {"id": d0, "status": "SUCCESS", "deploymentStopped": False,
+                                         "canRedeploy": True}}}]}}}]}})
+            elif args[:2] == ["service", "status"]:
+                raw = json.dumps(status(d1 if deployed[0] else d0))
+                if context_bad and "--environment" not in args:
+                    raw = json.dumps(status("cccccccc-1111-2222-3333-cccccccccccc"))
+            elif args[:2] == ["variable", "set"]:
+                events.append("stage")
+                self.assertEqual(kwargs["input"], NEW.encode("ascii"))
+                self.assertEqual(args, ["variable", "set", "API_KEY", "--stdin", "--skip-deploys",
+                    "--service", req["expected_target"]["service"], "--environment", req["expected_target"]["environment"], "--json"])
+                raw = stage_ack if stage_ack is not None else '{"keys":["API_KEY"],"set":true}'
+            elif args[:1] == ["redeploy"]:
+                events.append("activate"); deployed[0] = True
+                self.assertEqual(args, ["redeploy", "--service", req["expected_target"]["service"], "--yes", "--json"])
+                raw = activate_ack if activate_ack is not None else json.dumps({"id": d1})
+            else:
+                self.fail("Unexpected native command vector")
+            return types.SimpleNamespace(returncode=0, stdout=raw.encode(), stderr=b"FAKE_PRIVATE_STDERR")
+
+        original_get, original_post, original_probe = backend.get_config, backend.post_config, backend.probe_tools
+        def get():
+            events.append("get"); return original_get()
+        def post(value):
+            events.append("post"); return original_post(value)
+        def probe(key):
+            events.append("probe"); return original_probe(key)
+        backend.get_config, backend.post_config, backend.probe_tools = get, post, probe
+        def jwt():
+            events.append("jwt")
+            if guard_missing:
+                raise m.PlanAError("NO_ECHO_REQUIRED")
+            return JWT
+        def generate(size):
+            self.assertEqual(size, 32)
+            self.assertIn("get", events)
+            self.assertGreater(custody.ready_calls, 0)
+            events.append("generate"); return NEW
+        argv = ["rotate-mcpo", "--operation-id", req["operation_id"], "--approval-reference", req["approval_reference"],
+            "--project", req["expected_target"]["project"], "--environment", req["expected_target"]["environment"],
+            "--service", req["expected_target"]["service"], "--expected-source", req["expected_source"],
+            "--expected-deployment", d0, "--qualification-reference", req["prerequisites"]["qualification_reference"],
+            "--selector", ORIGIN, "openapi.json", "mcpo", "--phase", "execute",
+            "--logging-qualified", "--patched-source-qualified", "--exclusive-writer", "--auth-available"]
+        output = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(m.subprocess, "run", side_effect=process))
+            stack.enter_context(mock.patch.object(m, "private_jwt", side_effect=jwt))
+            stack.enter_context(mock.patch.object(m, "PrivateHTTP", return_value=backend))
+            stack.enter_context(mock.patch.object(m, "WindowsCustody", return_value=custody))
+            # Private nonsecret terminal input only, never an approval CLI flag.
+            stack.enter_context(mock.patch.object(m.sys.stdin, "isatty", return_value=True))
+            stack.enter_context(mock.patch.object(m.sys.stderr, "isatty", return_value=True))
+            stack.enter_context(mock.patch.object(m.sys.stdin, "readline", return_value=json.dumps(owner) + "\n"))
+            stack.enter_context(mock.patch.object(m.secrets, "token_hex", side_effect=generate))
+            stack.enter_context(contextlib.redirect_stdout(output))
+            exitcode = m.main(argv)
+        result = json.loads(output.getvalue())
+        for sentinel in (JWT, OLD, NEW, "FAKE_PRIVATE_STDERR"):
+            self.assertNotIn(sentinel, output.getvalue())
+        return result, exitcode, events, calls, backend, custody
+
+    def test_09_actual_cli_native_order_and_exact_ack_success(self):
+        m = self.implementation()
+        r, exitcode, events, calls, b, c = self.cli_fixture(m)
+        self.assertEqual(r["status"], "COMPLETE", "Actual CLI must connect qualified native workflow")
+        self.assertEqual(exitcode, 0)
+        self.assertEqual(events, ["jwt", "get", "generate", "stage", "activate", "get", "post", "get", "probe"])
+        self.assertEqual(b.probes, [NEW])
+        self.assertEqual(sum(call[0][1] == "redeploy" for call in calls), 1)
+        self.assertEqual(c.record["phase"], "COMPLETE")
+
+    def test_10_actual_cli_bad_ack_unknown_no_activation(self):
+        m = self.implementation()
+        for raw in ('{}', '{"keys":["API_KEY"],"set":1}', '{"keys":["API_KEY"],"set":true,"set":true}',
+                    '{"keys":["API_KEY"],"set":true} trailing', '{"keys":["OTHER"],"set":true}'):
+            with self.subTest(raw=raw):
+                r, _, events, _, _, c = self.cli_fixture(m, stage_ack=raw)
+                self.assertEqual(r["code"], "UNKNOWN_EFFECTS")
+                self.assertNotIn("activate", events)
+                self.assertEqual(c.record["phase"], "SECRET_WRITE_INTENT")
+        r, _, events, _, _, c = self.cli_fixture(m, activate_ack='{"id":"invalid"}')
+        self.assertEqual(r["code"], "UNKNOWN_EFFECTS")
+        self.assertNotIn("post", events)
+        self.assertEqual(c.record["phase"], "ACTIVATION_INTENT")
+
+    def test_11_actual_cli_missing_owner_context_or_noecho_stops_early(self):
+        m = self.implementation()
+        for kwargs in ({"owner_missing": True}, {"context_bad": True}, {"guard_missing": True}):
+            with self.subTest(guard=kwargs):
+                r, _, events, _, b, c = self.cli_fixture(m, **kwargs)
+                self.assertNotEqual(r["status"], "COMPLETE")
+                self.assertNotIn("generate", events)
+                self.assertNotIn("stage", events)
+                self.assertEqual(c.writes, 0)
+                self.assertEqual(b.posts, 0)
+                if "guard_missing" not in kwargs:
+                    self.assertNotIn("jwt", events)
+
+    def test_12_probe_uses_stored_readback_credential_and_unknown_stops(self):
+        m = self.implementation()
+        self.assertTrue(callable(getattr(m.PrivateHTTP, "probe_tools", None)),
+                        "Requirement: actual protected fixed-origin /_tools method must exist")
+        b = PrivateBackend()
+        b.value["TOOL_SERVER_CONNECTIONS"][1]["key"] = OLD
+        actual_select = m.select_cohort
+        def select(value, selectors):
+            selected = actual_select(value, selectors)
+            if b.gets == 3:
+                value["TOOL_SERVER_CONNECTIONS"][selected[0]]["key"] = "FAKE_STORED_READBACK_KEY"
+            return selected
+        with mock.patch.object(m, "select_cohort", side_effect=select):
+            r, *_ = self.run_case(m, backend=b)
+        self.assertEqual(r["status"], "COMPLETE")
+        self.assertEqual(b.probes, ["FAKE_STORED_READBACK_KEY"])
+        r, _, events, _, b, c = self.cli_fixture(m, probe_fail=True)
+        self.assertEqual(r["status"], "STOPPED")
+        self.assertEqual(c.record["phase"], "PROBE_INTENT")
+        self.assertIn("probe", events)
+
+    def test_13_actual_http_probe_fixed_origin_and_bearer(self):
+        m = self.implementation()
+        self.assertTrue(callable(getattr(m.PrivateHTTP, "probe_tools", None)), "Protected probe implementation required")
+        client = m.PrivateHTTP(JWT)
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.geturl.return_value = ORIGIN + "/_tools"
+        response.read.return_value = b'{"synthetic":true}'
+        opener = mock.Mock(); opener.open.return_value = response
+        client._opener = opener
+        client.probe_tools("FAKE_STORED_READBACK_KEY")
+        req = opener.open.call_args.args[0]
+        self.assertEqual(req.full_url, ORIGIN + "/_tools")
+        self.assertEqual(req.get_header("Authorization"), "Bearer FAKE_STORED_READBACK_KEY")
+        self.assertNotIn(JWT, str(req.headers))
+        response.status = 401
+        with self.assertRaises(m.PlanAError):
+            client.probe_tools("FAKE_STORED_READBACK_KEY")
 
 
 if __name__ == "__main__":

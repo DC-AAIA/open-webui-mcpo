@@ -1,5 +1,248 @@
 # Plan A MCPO private executor — amended execution brief
 
+## Current follow-up cycle — direct DC checkpoint disposition
+
+On 2026-10-26 DC answered the actual native checkpoint **"Resume one bounded
+cycle"** and directly authorized one material completion cycle. This section is
+the current execution record and supersedes the retained first-cycle statements
+below concerning disabled CLI, missing protected probe, exit-code-only native
+acknowledgement and the old clock. Historical outcomes/provenance remain historical.
+
+Clock: **2026-10-26T17:38:53Z–18:23:53Z**, aim code/Green by **18:03Z**.
+Preserved candidate: `6ad35471087bc93dafe0eefffdd559dcdcf7a99b`, exact branch
+`plan-a/mcpo-executor-2026-10-25`, clean SA-03 preflight. Same four-file maximum;
+only brief, executor and existing test group change this cycle. Application
+`src/mcpo/main.py` is unchanged from its already approved seven-line startup
+fingerprint-log removal; no other application behavior changes.
+
+Full DC Done remains **usable private executor + approved one real cohort
+replacement + protected changed-edge `/_tools` acceptance**. No real replacement
+or protected live acceptance occurred during authoring, so **FULL LIVE OUTCOME:
+NOT MET**. Source implementation/local fake Green is distinct from runtime Done.
+
+G0 classification remains **accidental-drift assurance**; control-3 scenario is
+only trusted-operator wrong-target/unrelated-settings mistakes. Logging/retry
+tests are safeguards, not expanded assurance scenarios. One cycle means freeze
+the expanded existing fixture group/fake-boundary updates, honest Red, one bundled
+software correction, one final Green; at most two full runs this follow-up. Failed
+Green means STOP, no software/test edit or rerun. Only truthful brief-only observed
+result reconciliation may follow Green. No review agent, installation/helper,
+schema/agent/provider/credential-cohort expansion, reset/stash, Git write,
+publication, deployment, live credential use, custody setup or real key generation.
+Root owns clock checkpoints; no implicit extension or extra approval gate.
+
+### Concrete native interface and source baseline
+
+SA-02 now qualifies CLI **4.40.0** argv/input/output using exact-tag `variable.rs`,
+`redeploy.rs`, `service.rs`, `status.rs`, `queries/strings/Project.graphql`,
+`mutations/strings/DeploymentRedeploy.graphql`, and `gql/schema.json`.
+Official sources:
+
+- <https://raw.githubusercontent.com/railwayapp/cli/v4.40.0/src/commands/variable.rs>
+- <https://raw.githubusercontent.com/railwayapp/cli/v4.40.0/src/commands/redeploy.rs>
+- <https://raw.githubusercontent.com/railwayapp/cli/v4.40.0/src/gql/mutations/strings/DeploymentRedeploy.graphql>
+- <https://raw.githubusercontent.com/railwayapp/cli/v4.40.0/src/gql/queries/strings/Project.graphql>
+- <https://raw.githubusercontent.com/railwayapp/cli/v4.40.0/src/gql/schema.json>
+
+SA-04 performed one focused official Project query read, no actual runtime call.
+The query returns all project environments, not selected linked environment;
+`source.repo/image` are typed, commit/branch/auto-trigger/workspace UUID are not.
+Do not guess `meta.commitHash` or infer runtime source from local Git. Native
+whoami workspace membership is not proof of project-workspace association.
+Retained actual whoami shape is `{name,email,workspaces:[{id,name},...]}` with
+no required top-level user id. Identical duplicate workspace memberships from
+native aggregation are accepted; inconsistent matched names fail. Project
+workspace name is cross-checked, while UUID association remains owner-confirmed.
+SA-02's current private native preflight at approximately 17:51Z matched target
+project/env/service and linked/explicit status at D0 `c527e170-5719-4d84-96c4-b747655791ab`,
+SUCCESS/not-stopped/canRedeploy. It does NOT prove reviewed patched S/branch/trigger
+or exclusive window; those owner facts remain unconfirmed. SA-04 performed no
+live call and does not convert this metadata result into protected acceptance.
+
+Root/SA-02 subsequently qualified the unmodified frozen Python `NativeRunner`
+itself, not only PowerShell's launcher: exact `--version` and explicit-environment
+service status passed through its real subprocess/JSON boundary. The service
+remained D0 `c527e170-5719-4d84-96c4-b747655791ab`, SUCCESS/not stopped. This was
+two read-only client-qualification calls, not another full suite or acceptance
+probe. No variable write, deployment or private credential GET occurred.
+
+All native calls use fixed cwd `C:\Projects\open-webui-mcpo`, `shell=False`,
+private transient stdout/stderr capture and finite subprocess timeouts. No raw
+result, error text or traceback is emitted, logged or written to a public receipt.
+No authentication-store, variables/config export, environment or log read.
+
+1. Require version `railway 4.40.0`; privately parse `whoami --json` identity and
+   expected workspace membership, then `status --json` expected project and unique
+   accessible expected env/service node, GitHub source repo, D0 SUCCESS,
+   `deploymentStopped=false`, `canRedeploy=true`.
+2. Compare `service status --service <fixed-service> --json` against the same
+   vector with `--environment <fixed-env>`. Both exact five-field records
+   `id,name,deploymentId,status,stopped` must agree and equal expected-env D0.
+   This binds what redeploy uses without relinking. Owner confirms Production
+   linkage and current S-to-D0 source binding; metadata cannot manufacture it.
+3. Stage exactly `railway variable set API_KEY --stdin --skip-deploys --service
+   <fixed-service> --environment <fixed-env> --json`; successor is stdin only.
+   Require exit 0 and one exact object `{"keys":["API_KEY"],"set":true}`.
+   Reject duplicate keys, trailing data, wrong fields/types or malformed output.
+   Missing/uncertain acknowledgement after write intent is UNKNOWN_EFFECTS;
+   acknowledgement is not readiness.
+4. Revalidate latest/context still D0 immediately before one
+   `railway redeploy --service <fixed-service> --yes --json`. No project/env/source/
+   deployment-ID flag exists. Source proves it selects latest.id and submits
+   deploymentRedeploy; require exact `{"id":"<D1>"}`, canonical UUID, D1 != D0.
+5. Poll only explicit-env service status, at most ten attempts, 180-second
+   scheduling deadline and 20-second per-call timeout. Require D1 SUCCESS and
+   stopped=false; different deployment, malformed output, failure or timeout
+   stops without another redeploy, rollback or blind replay.
+
+Stage context is also rechecked immediately before native write. Existing owner
+exclusive activation/write window is required: these comparisons are NOT CAS.
+Source/schema do not independently establish server variable freshness; actual
+stored-key protected acceptance is the required proof. GitHub **Deploy Latest
+Commit** remains ONE-TIME code-patch rollout only when needed, current key
+unchanged. Routine native redeploy occurs only after current reviewed patched S
+is bound to D0. No upload, restart-old, image/registry switch or duplicate trigger.
+
+### Connected private CLI and exact current owner facts
+
+`main` now connects closed public validation -> private owner confirmation ->
+NativeActivation native context preflight -> existing custody-leaf preflight ->
+current admin JWT no-echo prompt -> PrivateHTTP/NativeBackend -> `execute`.
+There is no unconditional disabled-CLI path. Missing actual prerequisites hold
+conditionally with sanitized codes before secret mutation; flags alone are not
+evidence. Root must not invoke the real CLI until actual facts below are qualified.
+
+Owner enters one bounded JSON object privately in a local terminal, no secret
+values. Exact keys (no extras) are the object below; S, D0, Q and selector array
+must exactly equal approved public arguments/current evidence, not examples:
+
+```text
+{"expected_target":{"project":"62cb5067-2ad6-47b2-97d6-de206f37d18a","environment":"565c4c1e-0616-47d2-8fe3-faa6837fbe65","service":"66391175-bd78-456f-93d5-641498dabcf9"},"expected_source":"S","expected_deployment":"D0","selectors":[{"url":"https://open-webui-mcpo-production.up.railway.app","path":"APPROVED_PATH","info_id":"APPROVED_ID"}],"qualification_reference":"Q","repository":"DC-AAIA/open-webui-mcpo","branch":"main","workspace":"0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81","production_linked":true,"patched_source_active":true,"logging_protected":true,"exclusive_window":true,"complete_cohort":true,"private_admin_auth":true,"leaf_custody_qualified":true}
+```
+
+The booleans mean actual current owner-confirmed facts, not permission to invent
+them. Source S must already be the active patched source for D0 at approved repo/
+main; project/workspace association, Production linkage, complete approved cohort,
+logging protection, private current admin auth and qualified leaf must be real.
+The owner is responsible for retaining the qualification reference outside public
+secret-bearing output. Do not paste a JWT into this object.
+
+Only after those facts/native checks and existing-leaf check does the CLI call
+`private_jwt()` in the private local terminal. JWT is entered solely at getpass,
+never through model/tools, CLI/env arguments, token store, browser or login.
+Non-TTY/echo fallback fails closed. No transcript, tracing or public raw output.
+
+Exact private command grammar (not executed in authoring). Variables are already
+qualified NONSECRET metadata; repeat `--selector` for the entire approved cohort:
+
+```powershell
+python -B tools/plan_a_executor.py rotate-mcpo --operation-id $OperationId --approval-reference DC-2026-10-26-AMENDED-PACKET --project 62cb5067-2ad6-47b2-97d6-de206f37d18a --environment 565c4c1e-0616-47d2-8fe3-faa6837fbe65 --service 66391175-bd78-456f-93d5-641498dabcf9 --expected-source $ReviewedPatchedSourceSha --expected-deployment $CurrentD0 --selector https://open-webui-mcpo-production.up.railway.app $ApprovedPath $ApprovedInfoId --phase execute --qualification-reference $QualificationReference --logging-qualified --patched-source-qualified --exclusive-writer --auth-available
+```
+
+### Protected completion, preservation and custody
+
+Private authenticated config GET, exact cohort/auth checks and fake-sentinel
+custody readiness precede any real `secrets.token_hex(32)` generation. Existing
+preserve/modify/POST and exact private full-preimage re-GET under exclusive writer
+window remain. Only documented type/headers defaults are normalized. After POST,
+compare preservation against FINAL private config readback and select the cohort
+again. Write PROBE_INTENT, then GET fixed
+`https://open-webui-mcpo-production.up.railway.app/_tools` with bearer key obtained
+from that final stored readback entry, **not JWT or separately retained successor**.
+Require HTTP 200, default TLS, no redirects, bounded private body and no body
+logging/count assertions. Only then checkpoint COMPLETE. Failure/unknown probe
+leaves non-COMPLETE state and stops; resume cannot replay an unknown intent.
+No old-secret test, C1 reopening or n8n/backend requalification is included.
+
+Existing leaf `%LOCALAPPDATA%\DC\PlanA\MCPO` is a separate setup prerequisite.
+The code cannot create it or modify ACLs. Owner/private trustee DACL checks apply
+to LEAF and state/lock/pending files; ancestors get integrity/no-reparse checks
+only. An ancestor's unrelated read-only ACE does NOT require parent ACL stripping
+or block an otherwise private leaf. Missing leaf conditionally yields
+CUSTODY_UNAVAILABLE before writes if absent or unqualified. Root reports the
+one-time leaf setup is now complete under the original approved scope: existing
+leaf owner=current user, protected private DACL allows current user/SYSTEM/
+Administrators only; ancestor SDDL unchanged, unrelated ancestor read-only ACE
+retained. No lock/blob/other state file or successor was created by that setup.
+SA-04 did not perform setup or permission changes. Historical .NET DPAPI
+synthetic=True and private-leaf success alone did not qualify Python readiness.
+Root subsequently ran the actual frozen Python CurrentUser custody adapter with
+only its fixed synthetic sentinel: leaf preflight, lock and DPAPI readiness all
+passed. One bounded lock for `plan-a-20261026-001` remains; no encrypted operation
+blob, pending file or real successor was created. Existing ancestor ACLs remain
+unchanged. This is actual host readiness, not a real-key persistence, crash or
+cross-machine recovery test. The frozen suite still uses fake OS boundaries.
+Existing <=64-KiB CurrentUser protected blob, atomic+flush, lock, same 256-bit
+successor, no predecessor/JWT/preimage archives and retained uncertain state/no
+cleanup remain. No memory-zeroization or portable recovery claim.
+
+Logging stays unchanged: actual active Redis value-refresh INFO exposure requires
+source-backed existing control or conditionally necessary supported WARNING while
+preserving ORIGINAL audit policy/delivery; inactive refresh requires no new filter.
+No AUDIT_NONE, CRITICAL, invented knob or automatic INFO restoration.
+
+### Follow-up frozen tests and result record
+
+Historical cycle-1 eight Green is not a new PASS. Existing assertions retain the
+same scenario. Expanded existing group adds cases 9–13: actual `main` and fixed
+native subprocess vectors/owner input; strict stage/activation acknowledgements;
+context/noecho/no-early-key generation; final-stored-readback probe credential;
+unknown probe effects; actual PrivateHTTP fixed-origin/bearer/HTTP200 behavior.
+All added cases/fake-boundary changes were frozen before software correction.
+
+Follow-up Red, actual observed before correction:
+
+```text
+python -B -m unittest discover -s tests -p test_plan_a_executor.py -v
+Ran 13 tests in 0.268s
+FAILED (failures=9); errors/collection errors=0
+```
+
+Original eight retained methods passed; new requirements produced nine assertion
+failures including subcases. No import error or dummy unconditional failure.
+Red board receipt: `board_ebeb5847-18a9-4478-a112-445aa8ad4477`.
+Syntax-only AST inspection passed during the one bundle. Final Green is not yet
+observed at the pre-Green source freeze; the permitted brief-only closeout now
+records the actual final result below, with no software/test edit or rerun:
+
+```text
+python -B -m unittest discover -s tests -p test_plan_a_executor.py -v
+Ran 13 tests in 0.409s
+OK — 13 PASS; failures=0; errors=0
+```
+
+Exactly **two full suite runs this follow-up**, one bundled material correction.
+The original eight-case historical Green remains separate evidence. No post-Green
+software/test change, refactor, additional suite/smoke or live private invocation.
+Actual `main` success/ordering, strict native acknowledgements, conditional guards,
+stored-readback-key probe and unknown probe effects were exercised with fake
+process/input/HTTP/OS custody boundaries, not real Railway/DPAPI/authentication.
+Green was reported as `board_2624a16e-f46d-483e-94b8-24ac35695483`.
+
+**Source workflow implementation: CONNECTED / LOCAL GREEN.** The previous missing
+CLI, native acknowledgement and protected-probe code gaps are corrected. Remaining
+external prerequisites: actual active patched-source S/D0/default-main/trigger and
+workspace association confirmation; qualified logging/exclusive window; complete
+approved selectors; current private admin JWT; and actual Python CurrentUser
+real-successor persistence/operation acceptance. Root separately completed the
+private leaf and actual Python synthetic readiness, with ancestors unchanged;
+this code authoring created no leaf, ACL or state and generated no successor.
+Full live Done remains
+NOT MET until the approved actual cohort replacement and protected `/_tools`
+acceptance. No live acceptance or production readiness is inferred from fake Green.
+
+Feature-branch preservation and an explicitly incomplete PR may proceed through
+SA-03 under the existing approval after root Green. Main merge, code rollout and
+credential cutover remain held on their actual source/runtime preconditions.
+SA-03's merge proposal remains one code event for the same four files,
+pause/restore original active `publish.yaml` ID182507354 and `build-release.yml`
+ID182507351; no workflow file/protection/source cleanup changes. No automatic
+publication authority comes from this source completion alone. C1 remains closed
+positive PASS / old-negative UNTESTED; Plan B parked; aFPM paused. Full live Done
+still needs the approved real cohort replacement and actual protected acceptance.
+
+## Retained first-cycle brief (historical, superseded where noted above)
+
 Authority: direct DC execution approval, 2026-10-26, exact Amended Packet.
 Approval reference: `DC-2026-10-26-AMENDED-PACKET`. This reference is a binding
 identifier, not a credential, new approval mechanism, or replacement for DC consent.

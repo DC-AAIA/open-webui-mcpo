@@ -1,8 +1,7 @@
 """Bounded Plan A private executor. Stdlib only; never run via model tools.
 
-The public CLI deliberately has NO qualified live activation adapter. It stops at
-ACTIVATION_OWNER_REQUIRED before a private GET, key generation or mutation. The
-injected engine is acceptance-tested with fakes, not production-qualified.
+The private CLI binds qualified native context and current owner source evidence
+before JWT input. Tests use fake boundaries; no live qualification is implied.
 """
 import argparse
 import contextlib
@@ -19,6 +18,7 @@ import secrets
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,6 +32,9 @@ MCPO_ORIGIN = "https://open-webui-mcpo-production.up.railway.app"
 WEBUI_ORIGIN = "https://open-webui-production-b978.up.railway.app"
 CONFIG_URL = WEBUI_ORIGIN + "/api/v1/configs/tool_servers"
 APPROVAL = "DC-2026-10-26-AMENDED-PACKET"
+NATIVE_CWD = r"C:\Projects\open-webui-mcpo"
+WORKSPACE = "0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81"
+REPOSITORY = "DC-AAIA/open-webui-mcpo"
 MAX_BLOB = 65536
 MAX_RESPONSE = 1024 * 1024
 TIMEOUT = 20
@@ -41,9 +44,10 @@ CODES = frozenset({"INVALID_REQUEST", "PREREQUISITES_REQUIRED", "SELECTOR_REJECT
                    "UNKNOWN_EFFECTS", "PREIMAGE_CHANGED", "READBACK_MISMATCH",
                    "ACTIVATION_PROOF_INVALID", "OPERATION_EXISTS", "RESUME_REQUIRED",
                    "PRIVATE_TRANSPORT_FAILED", "PRIVATE_WRITE_FAILED", "NO_ECHO_REQUIRED",
-                   "COMPLETE", "INTERNAL_STOP"})
+                   "SOURCE_OWNER_CONFIRMATION_REQUIRED", "NATIVE_CONTEXT_REJECTED",
+                   "PROTECTED_PROBE_FAILED", "COMPLETE", "INTERNAL_STOP"})
 PHASES = frozenset({"PREFLIGHT", "READY", "SECRET_WRITE_INTENT", "SECRET_STAGED",
-                    "ACTIVATION_INTENT", "ACTIVATED", "CONFIG_POST_INTENT", "COMPLETE"})
+                    "ACTIVATION_INTENT", "ACTIVATED", "CONFIG_POST_INTENT", "PROBE_INTENT", "COMPLETE"})
 
 
 class PlanAError(Exception):
@@ -209,7 +213,7 @@ def execute(req, backend, custody, activation):
                 if state.get("binding") != binding(req) or req["phase"] != "resume":
                     raise PlanAError("OPERATION_EXISTS")
                 phase = state.get("phase", "PREFLIGHT")
-                if phase in {"SECRET_WRITE_INTENT", "ACTIVATION_INTENT", "CONFIG_POST_INTENT"}:
+                if phase in {"SECRET_WRITE_INTENT", "ACTIVATION_INTENT", "CONFIG_POST_INTENT", "PROBE_INTENT"}:
                     return receipt("STOPPED", "UNKNOWN_EFFECTS", phase)
                 if phase == "COMPLETE":
                     return receipt("COMPLETE", "COMPLETE", phase)
@@ -266,7 +270,11 @@ def execute(req, backend, custody, activation):
             readback = backend.get_config()
             if normalized(readback) != normalized(after):
                 raise PlanAError("READBACK_MISMATCH")
-            select_cohort(readback, req["selectors"])
+            stored_indices = select_cohort(readback, req["selectors"])
+            # Probe ONLY the credential persisted by the final consumer readback.
+            # Never use the JWT or a separately retained/generated key here.
+            checkpoint("PROBE_INTENT")
+            backend.probe_tools(readback["TOOL_SERVER_CONNECTIONS"][stored_indices[0]]["key"])
             checkpoint("COMPLETE")
             return receipt("COMPLETE", "COMPLETE", phase)
     except PlanAError as exc:
@@ -336,6 +344,22 @@ class PrivateHTTP:
     def write_secret(self, successor):
         NativeSecretWriter().write_secret(successor)
 
+    def probe_tools(self, stored_key):
+        try:
+            if not isinstance(stored_key, str) or not stored_key or any(c.isspace() for c in stored_key):
+                raise ValueError
+            url = MCPO_ORIGIN + "/_tools"
+            req = urllib.request.Request(url, method="GET", headers={
+                "Authorization": "Bearer " + stored_key, "Accept": "application/json"})
+            with self._opener.open(req, timeout=TIMEOUT) as response:
+                if response.status != 200 or response.geturl() != url:
+                    raise ValueError
+                # Bounded, private body only; no payload or inventory-count gate.
+                if len(response.read(MAX_RESPONSE + 1)) > MAX_RESPONSE:
+                    raise ValueError
+        except BaseException:
+            raise PlanAError("PROTECTED_PROBE_FAILED") from None
+
 
 class NativeSecretWriter:
     """Private SA-02-owned stdin write only. No deploy/redeploy/upload command."""
@@ -345,17 +369,194 @@ class NativeSecretWriter:
         try:
             # Existing native auth is opaque. No auth store or variable reads.
             result = subprocess.run(vector, input=successor.encode("ascii"), shell=False,
-                                    capture_output=True, timeout=30, check=False)
+                                    cwd=NATIVE_CWD, capture_output=True, timeout=30, check=False)
             if result.returncode != 0:
                 raise ValueError
-            # stdout/stderr are deliberately private and never in a receipt.
+            ack = private_json(result.stdout)
+            if set(ack) != {"keys", "set"} or ack["keys"] != ["API_KEY"] or ack["set"] is not True:
+                raise ValueError
         except BaseException:
-            raise PlanAError("PRIVATE_WRITE_FAILED") from None
+            raise PlanAError("UNKNOWN_EFFECTS") from None
 
 
 class ActivationOwnerRequired:
     def preflight(self, req):
         raise PlanAError("ACTIVATION_OWNER_REQUIRED")
+
+
+def private_json(raw):
+    if not isinstance(raw, (bytes, str)) or len(raw) > MAX_RESPONSE:
+        raise PlanAError("NATIVE_CONTEXT_REJECTED")
+    value = json.loads(raw, object_pairs_hook=_json_pairs,
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    if type(value) is not dict:
+        raise PlanAError("NATIVE_CONTEXT_REJECTED")
+    return value
+
+
+def owner_contract(req):
+    return {"expected_target": TARGET, "expected_source": req["expected_source"],
+            "expected_deployment": req["expected_deployment"], "selectors": req["selectors"],
+            "qualification_reference": req["prerequisites"]["qualification_reference"],
+            "repository": REPOSITORY, "branch": "main", "workspace": WORKSPACE,
+            "production_linked": True, "patched_source_active": True, "logging_protected": True,
+            "exclusive_window": True, "complete_cohort": True, "private_admin_auth": True,
+            "leaf_custody_qualified": True}
+
+
+def private_owner_confirmation(req):
+    """Current nonsecret owner facts, privately entered, not CLI flags as proof."""
+    try:
+        if not sys.stdin.isatty() or not sys.stderr.isatty():
+            raise ValueError
+        sys.stderr.write("Private owner confirmation JSON (nonsecret source/context facts only): ")
+        raw = sys.stdin.readline(16385)
+        if len(raw) > 16384 or not raw.endswith("\n"):
+            raise ValueError
+        value = private_json(raw)
+        expected = owner_contract(req)
+        if value != expected or any(type(value[k]) is not bool for k, v in expected.items() if type(v) is bool):
+            raise ValueError
+        return value
+    except BaseException:
+        raise PlanAError("SOURCE_OWNER_CONFIRMATION_REQUIRED") from None
+
+
+class NativeRunner:
+    """Only fixed native vectors below; transient stdout/stderr never escape."""
+    def run(self, args, *, json_output=True):
+        try:
+            result = subprocess.run(["railway"] + args, shell=False, cwd=NATIVE_CWD,
+                                    capture_output=True, timeout=20, check=False)
+            if result.returncode != 0 or len(result.stdout) > MAX_RESPONSE:
+                raise ValueError
+            return private_json(result.stdout) if json_output else result.stdout.decode("utf-8").strip()
+        except BaseException:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED") from None
+
+
+class NativeActivation:
+    """Qualified CLI4.40 adapter; source commit/branch remain OWNER facts.
+
+    Native status returns all project envs, NOT the linked selected env. Compare
+    linked and explicit-env service records before using redeploy's latest.id.
+    No metadata guessing, relink, deployment-ID flag or atomic-CAS claim.
+    """
+    def __init__(self, owner):
+        self.owner = owner
+        self.runner = NativeRunner()
+        self._prepared = None
+        self._workspace_name = None
+
+    def _status(self, *, explicit=True):
+        args = ["service", "status", "--service", TARGET["service"]]
+        if explicit:
+            args += ["--environment", TARGET["environment"]]
+        value = self.runner.run(args + ["--json"])
+        if set(value) != {"id", "name", "deploymentId", "status", "stopped"}:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        if value["id"] != TARGET["service"] or value["name"] != "open-webui-mcpo" or type(value["stopped"]) is not bool:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        if value["deploymentId"] is not None and not _uuid(value["deploymentId"]):
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        if value["status"] is not None and not isinstance(value["status"], str):
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        return value
+
+    def verify_context(self, req):
+        try:
+            project = self.runner.run(["status", "--json"])
+            if project.get("id") != TARGET["project"]:
+                raise ValueError
+            if project.get("workspace", {}).get("name") != self._workspace_name:
+                raise ValueError
+            envs = [e["node"] for e in project["environments"]["edges"]
+                    if e["node"]["id"] == TARGET["environment"]]
+            if len(envs) != 1 or envs[0]["canAccess"] is not True or envs[0].get("deletedAt") is not None:
+                raise ValueError
+            instances = [e["node"] for e in envs[0]["serviceInstances"]["edges"]
+                         if e["node"]["serviceId"] == TARGET["service"]]
+            if len(instances) != 1:
+                raise ValueError
+            instance = instances[0]
+            latest = instance["latestDeployment"]
+            if instance["environmentId"] != TARGET["environment"] or instance["source"]["repo"] != REPOSITORY:
+                raise ValueError
+            if instance["source"].get("image") not in (None, ""):
+                raise ValueError
+            if latest["id"] != req["expected_deployment"] or latest["status"] != "SUCCESS" or latest["deploymentStopped"] is not False or latest["canRedeploy"] is not True:
+                raise ValueError
+            linked, explicit = self._status(explicit=False), self._status()
+            if linked != explicit or explicit["deploymentId"] != latest["id"] or explicit["status"] != "SUCCESS" or explicit["stopped"] is not False:
+                raise ValueError
+        except BaseException:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED") from None
+
+    def preflight(self, req):
+        if self.owner != owner_contract(req):
+            raise PlanAError("SOURCE_OWNER_CONFIRMATION_REQUIRED")
+        if self._prepared == binding(req):
+            return
+        if self.runner.run(["--version"], json_output=False) != "railway 4.40.0":
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        identity = self.runner.run(["whoami", "--json"])
+        if not all(isinstance(identity.get(k), str) and identity[k] for k in ("name", "email")):
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        workspaces = identity.get("workspaces")
+        if type(workspaces) is not list:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        matches = [w for w in workspaces if type(w) is dict and w.get("id") == WORKSPACE]
+        if not matches or any(not isinstance(w.get("name"), str) or not w["name"] for w in matches):
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        if len({w["name"] for w in matches}) != 1:
+            raise PlanAError("NATIVE_CONTEXT_REJECTED")
+        # Native member/external aggregation may repeat identical memberships.
+        self._workspace_name = matches[0]["name"]
+        # Membership isn't project-workspace association: owner binds that fact.
+        self.verify_context(req)
+        self._prepared = binding(req)
+
+    def activate(self, req):
+        try:
+            self.verify_context(req)  # Immediately before redeploy's latest selection.
+            ack = self.runner.run(["redeploy", "--service", TARGET["service"], "--yes", "--json"])
+            if set(ack) != {"id"} or not _uuid(ack["id"]) or ack["id"] == req["expected_deployment"]:
+                raise ValueError
+            d1 = ack["id"]
+            deadline = time.monotonic() + 180
+            for attempt in range(10):
+                if time.monotonic() >= deadline:
+                    raise ValueError
+                current = self._status()
+                if current["deploymentId"] != d1 or current["stopped"]:
+                    raise ValueError
+                if current["status"] == "SUCCESS":
+                    return {**TARGET, "source": req["expected_source"], "deployment": d1, "status": "SUCCESS"}
+                if current["status"] not in {"BUILDING", "DEPLOYING", "INITIALIZING", "QUEUED", "WAITING"}:
+                    raise ValueError
+                if attempt < 9:
+                    time.sleep(2)
+            raise ValueError
+        except BaseException:
+            raise PlanAError("UNKNOWN_EFFECTS") from None
+
+
+class NativeBackend:
+    def __init__(self, http, activation, req):
+        self.http, self.activation, self.req = http, activation, req
+
+    def get_config(self):
+        return self.http.get_config()
+
+    def post_config(self, value):
+        self.http.post_config(value)
+
+    def probe_tools(self, stored_key):
+        self.http.probe_tools(stored_key)
+
+    def write_secret(self, successor):
+        self.activation.verify_context(self.req)
+        NativeSecretWriter().write_secret(successor)
 
 
 class WindowsCustody:
@@ -374,6 +575,14 @@ class WindowsCustody:
         self.directory = Path(local) / "DC" / "PlanA" / "MCPO"
         self.path = self.directory / (operation_id + ".dpapi")
         self._locked = False
+
+    def preflight(self):
+        try:
+            # _qualify applies private DACL/owner only to this existing leaf;
+            # ancestor lstat integrity/reparse checks do not inspect their ACLs.
+            self._qualify(self.directory)
+        except BaseException:
+            raise PlanAError("CUSTODY_UNAVAILABLE") from None
 
     @staticmethod
     def _apis():
@@ -582,7 +791,7 @@ class ClosedParser(argparse.ArgumentParser):
 
 def main(argv=None):
     try:
-        parser = ClosedParser(description="Private Plan A fixed-action preflight; activation bridge pending.")
+        parser = ClosedParser(description="Private Plan A fixed-action executor; owner/native qualification required.")
         parser.add_argument("action", choices=["rotate-mcpo"])
         for name in ("operation-id", "approval-reference", "project", "environment", "service",
                      "expected-source", "expected-deployment", "qualification-reference"):
@@ -601,17 +810,18 @@ def main(argv=None):
                    "exclusive_writer": args.exclusive_writer, "auth_available": args.auth_available,
                    "qualification_reference": args.qualification_reference}}
         validate_request(req)
-        # Hardcoded fail-closed bridge: confirmations are not native evidence.
-        # No key, JWT prompt, DPAPI call, directory/lock creation or GET occurs.
-        ActivationOwnerRequired().preflight(req)
-        # Private bootstrap building blocks above intentionally remain unconnected
-        # until exact native activation ownership/method is qualified and approved.
+        owner = private_owner_confirmation(req)
+        activation = NativeActivation(owner)
+        activation.preflight(req)
+        custody = WindowsCustody(req["operation_id"])
+        custody.preflight()  # Missing/unqualified leaf holds before JWT/real key.
+        jwt = private_jwt()
+        backend = NativeBackend(PrivateHTTP(jwt), activation, req)
+        result = execute(req, backend, custody, activation)
     except PlanAError as exc:
         result = receipt("REJECTED", exc.code)
     except BaseException:
         result = receipt("REJECTED", "INTERNAL_STOP")
-    else:
-        result = receipt("REJECTED", "ACTIVATION_OWNER_REQUIRED")
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] == "COMPLETE" else 2
 
