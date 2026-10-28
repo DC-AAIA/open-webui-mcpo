@@ -1,3 +1,246 @@
+# Plan A compatibility amendment — local implementation / 19 fake PASS; live held (2026-10-28)
+
+## Classification, authority and immutable boundaries
+
+OUTPUT_CLASSIFICATION: IMPLEMENTATION_AMENDMENT_LOCAL_VALIDATION_RECORD
+AUTHORITY: LOCAL_IMPLEMENTATION_AND_FAKE_VALIDATION_ONLY / NO_RUNTIME_OR_GIT_PUBLICATION_AUTHORITY
+Preparation approval: DC, 2026-10-28T18:09:13Z; brief-only authorship request:
+2026-10-28T18:23:50Z. Root/source session: `ses_e9ec4eb10ffeFJ0M0VImdMXKvD`.
+Implementation/local-fake approval: direct DC, 2026-10-28T18:47:37Z. Root phase-3
+disposition 2026-10-28T19:02:01Z retains mixed Red and includes the fixture fix in one bundle.
+Author: SA-04; source task: `ses_e80edc393ffeCSoBcywmtWshUh`.
+Target repository: `DC-AAIA/open-webui-mcpo`; local root: `C:\Projects\open-webui-mcpo`.
+This source amendment does not authorize live invocation or alter any retained receipt below.
+
+Current implementation maintained-file boundary is exactly three:
+`tools/plan_a_executor.py`, `tests/test_plan_a_executor.py`,
+and `docs/Plan_A_MCPO_Executor_Brief_2026-10-25.md`. No application source, Kilo,
+provider, dependency, workflow, credential, permission or new maintained artifact changes.
+Implementation began with helper/tests byte-identical to local H0
+`2f482369ff64177272a57994aea3ecfab24b4d08`, tree
+`3e5030f018e4bc2a344478a1c10152edf2408f5e`, branch `plan-a/mcpo-executor-2026-10-25`.
+Preparation preimage matched H0/tree/branch and three clean targets; implementation freeze
+matched the approved 55,676-byte brief and unchanged H0 helper/tests. SA-03 owns Git baseline.
+Cached refs are old; published runtime source is not locally resolvable. No fetch authorized.
+
+Runtime S_app is `8b27471532db3e870df86072cb444190d48194af`; Dpatch is
+`53b0c684-eccc-4d16-84c9-653331bedad6`. Root's existing evidence establishes
+SUCCESS, stopped=false, exact S_app and public root HTTP 200; no fresh check is required here.
+Local unpublished helper revision H is distinct from S_app: `--expected-source` MUST remain S_app,
+not local helper HEAD. Helper/docs/tests changes alone require no application redeploy.
+
+## Approved G0 controls — implementation/local fakes only
+
+1. Maximum: three maintained files named above; application core is a read-only hash guard.
+2. Frozen Done: known-failing requirements 14–17 corrected; guard additions 18–19 and all
+   retained 13 methods pass, exactly 19 named methods. Requirements 14–17 failed in mixed
+   Red below and now pass; guards 18–19 passed both runs, not baseline-failure claims.
+3. Concrete scenario: a trusted operator's legitimate absolute-spec/no-explicit-ID
+   connection and explicitly approved existing admin credential are misinterpreted,
+   causing wrong selection or unintended changes during the approved cohort replacement.
+4. One bounded material correction: freeze added cases/fixture changes, one pre-change Red,
+   one bundled helper correction, one post-change validation cycle/final Green. At most
+   two group invocations; pre-change Red is baseline evidence, not a material cycle.
+5. Active assurance classification: exactly `accidental-drift assurance`.
+
+Implementation window: 2026-10-28T18:47:53.4000911Z–19:32:53.4000911Z, 45 active minutes,
+excluding only actually recorded human-gate waiting; no waiting deduction has been booked.
+Retain all prior counters without reset or implicit extension. Failed or uninterpretable
+Green, scope change, uncertain effects or budget exhaustion means STOP/DC disposition.
+No extra autonomous correction, review, smoke or CI cycle. Only truthful brief-only result
+reconciliation may follow final Green. Local 19 PASS is NOT Full Live Done or eligibility.
+
+### Observed mixed Red / fixture disposition / final acceptance
+
+Invocation 1/2: exact frozen group command below, 19 methods in 0.614s, 29 assertion
+failures, errors/collection errors/skips=0; 12 methods passed, 7 failed. Methods 14/15/16/17
+had 1/5/2/13 failures respectively; retained 09/10/12 had 1/6/1. Guards 18/19 passed.
+Of 29 failures, 18 expose planned requirements and 11 are fixture contamination, not helper
+defects. Capturing stderr replaced the stream after its isatty mock; production owner TTY
+guard correctly rejected it. Root verified this and directed synthetic TTY behavior on the
+ACTUAL captured stream; no production guard/assertion/Done change. Retain this mixed Red,
+no reset or repeat. All 19 methods/assertions stay frozen apart from this fixture correction.
+Pre-bundle guard at 2026-10-28T19:03:04.9364149Z matched helper/test/brief/core hashes.
+The following first helper write opened the only material correction, now CLOSED by final
+invocation 2/2. Actual observed final result, not a prediction:
+
+```text
+python -B -m unittest discover -s tests -p test_plan_a_executor.py -v
+Ran 19 tests in 0.576s
+OK
+```
+
+All retained 01–13 and added 14–19 methods PASS; failures/errors/skips/collection errors=0.
+Final candidate freeze was 2026-10-28T19:05:58.6517897Z; successful run was followed by
+unchanged-byte readback at 2026-10-28T19:06:53.8111319Z, 1,559 seconds before no-wait deadline.
+Current approval consumed exactly two group invocations and one bundled material cycle;
+historical counters/receipts below remain retained. No waiting deduction, reset, extra run,
+post-Green helper/test edit or refactor. This update is truthful brief-only result closeout.
+Green-tested helper SHA-256: `E7A3FE94D7330D85749BDAA308D91C8977EE8F1BAEAB07F4D47C4BC1AD3AA19D`.
+Green-tested tests SHA-256: `C34C3FC7D1771F2AB2502F4A04C86CA39D54C4666B5C0EAD6CF7F48DB54FB6D4`.
+Core guard unchanged: `886C7D006F3BDB572A00A50BD3400606AC140D7BDAF62AB5611A3A8012C2521F`.
+Only the three maintained targets were authored. Original 39,970-byte retained-history
+suffix remains byte-identical. No real credential, GET, HTTP, native process, DPAPI, random
+successor, journal, activation, deployment, CI or Git operation was performed by this cycle.
+FULL PRIVATE COHORT DONE: NOT MET. LIVE TRANSACTION / SOURCE PUBLICATION: NOT AUTHORIZED.
+
+## Implemented selector source contract — local fake PASS only
+
+Affected helper positions at H0: `validate_request` 70–112, `select_cohort` 129–172,
+`normalized` 115–126, `binding` 175–177, and `main` 792–826.
+Keep existing relative-path grammar unchanged. Additionally permit exact `MCPO_ORIGIN + "/"`
+prefix with suffix satisfying that same relative grammar. Check the suffix, not `https://`'s
+separator; retain the entire original string. Other origins/schemes, userinfo, explicit
+ports, query/fragment, encoded/traversal forms and doubled path separators are not admitted.
+No new unrelated hardening; no fetching the spec URL or connection Verify call is added.
+
+Keep existing closed `{url,path,info_id}` selectors with nonempty SAFE_ID. Add the exclusive
+closed alternative `{url,path,no_explicit_id:true}`; require actual boolean true, not 1.
+Both shapes require exact fixed MCPO base URL. No extra keys or simultaneous `info_id`.
+No-ID means absent `info`, OR dict-valued `info` whose `id` is absent, null or exactly empty
+string. Present nonmapping `info` (including null), numeric/boolean ID and other ID types
+are rejected. Literal `auto` or a derived runtime index is NOT a no-ID match.
+Selection compares raw stored URL and path exactly; require one match per selector and
+no repeated matched index. Keep complete same-origin/shared-key cohort checks, auth/header
+checks and rejection behavior. Do not insert info/ID, rewrite path or discard unknown fields.
+`normalized` remains limited to its existing type/headers defaults; no ID/path normalization.
+All mutations still deep-copy the private preimage and change only selected `key` fields.
+
+CLI: retain repeatable `--selector URL PATH INFO_ID`; add repeatable two-argument
+`--selector-no-id URL PATH`. Neither alone is required, but combined count must be 1–32.
+Construct explicit-ID selectors first, then no-ID selectors, preserving occurrence order
+within each flag; owner JSON must match this exact order. Duplicate selectors/matches fail.
+No empty PowerShell 5.1 native argument, collision-prone sentinel or lossy JSON workaround.
+
+## Implemented explicit existing-admin-API-key contract — local fake PASS only
+
+CLI `--admin-auth-mode {jwt,existing-api-key}`, default `jwt`. Omitted/default/explicit jwt
+must preserve the legacy request, owner object and binding: do not add a JWT-mode field.
+Only API-key mode adds `admin_auth_mode:"existing-api-key"` to the closed request and
+matching owner object; binding already hashes request fields other than phase, including
+this field. Reject unknown modes and owner/request mismatch; no cross-mode state replay.
+Retain existing `private_jwt` prompt and TTY/no-echo behavior; shared getpass internals may
+be extracted minimally. Separate API-key prompt: `Existing Open WebUI admin API key
+(private, no echo; existing key only): ` (one continuous prompt, including trailing space).
+Both inputs remain nonempty and whitespace-free; API-key mode requires upstream `sk-`
+routing prefix, JWT mode rejects that prefix to prevent silent substitution. No local JWT
+parser, credential-validity claim, acquisition/login/password/OAuth flow or fallback.
+PrivateHTTP remains fixed Bearer/TLS/no-redirect, with existing bounds and sanitization.
+
+Owner JSON is exactly existing `owner_contract` fields (H0 397–404): expected_target,
+expected_source, expected_deployment, selectors, qualification_reference, repository,
+branch, workspace, production_linked, patched_source_active, logging_protected,
+exclusive_window, complete_cohort, private_admin_auth, leaf_custody_qualified; API-key
+mode adds ONLY admin_auth_mode. Existing booleans must be truthful, never inferred true.
+Retain fixed repository/main/workspace and exact target; Q/operation ID remain owner-bound
+nonsecret metadata. No credential value enters JSON. Do NOT add the previously proposed
+existing_admin_api_key_qualified, api_key_feature_enabled or api_key_config_route_permitted.
+Reuse private_admin_auth for current availability/approved source, not a claim of route success.
+
+Eligible API-key settings, allowlist and live validity remain UNVERIFIED, not manual TRUE gates.
+Under FUTURE separately authorized execution, fixed GET `/api/v1/configs/tool_servers`
+authenticates the admin and validates the exact schema before cohort/custody readiness and
+successor generation. Initial 401/403/auth/schema/cohort/custody failure stops before any
+generation/write. v0.8.10 restriction middleware is path-only/method-agnostic, covering that
+GET and planned POST under current policy; this does not guarantee later POST success or
+policy immutability. Retain full private preimage comparison/exclusive window; this is not CAS.
+
+## Public source grammar and private operator sequence — DO NOT EXECUTE LIVE
+
+Implemented in local source with 19-method fake PASS. OperationId and Q remain
+unresolved owner metadata; flags below describe future requirements, not current facts or
+transaction approval. S_app/Dpatch are runtime
+identities above; repeat selectors only for the privately qualified complete cohort.
+
+```powershell
+python -B tools/plan_a_executor.py rotate-mcpo --operation-id $OperationId --approval-reference DC-2026-10-26-AMENDED-PACKET --project 62cb5067-2ad6-47b2-97d6-de206f37d18a --environment 565c4c1e-0616-47d2-8fe3-faa6837fbe65 --service 66391175-bd78-456f-93d5-641498dabcf9 --expected-source $S_app --expected-deployment $Dpatch --selector-no-id https://open-webui-mcpo-production.up.railway.app https://open-webui-mcpo-production.up.railway.app/openapi.json --admin-auth-mode existing-api-key --phase execute --qualification-reference $Q --logging-qualified --patched-source-qualified --exclusive-writer --auth-available
+```
+
+Legacy APPROVAL `DC-2026-10-26-AMENDED-PACKET` is a binding identifier, NOT new consent.
+After separate explicit live approval only, owner may use first-party Settings > Account >
+API keys > Show > existing API Key (not adjacent JWT Token) as the existing-key source.
+Presence is operator-indicated; no value has been revealed. No create/regenerate/revoke,
+global enablement, allowlist edits, new identity/vault/SDK, browser-authstore/devtools/
+localStorage/cookie extraction or new login. Current local task permits no Show/Copy.
+Future operator manually binds operation/Q/cohort/source/exclusive window and truthful
+owner facts; credential goes only to private local no-echo getpass, never argv/env/files/model.
+Terminal cwd is `C:\Projects\open-webui-mcpo`; existing native CLI 4.40.0/auth are opaque.
+Prompt order: public validation -> `Private owner confirmation JSON (nonsecret source/context
+facts only): ` -> native context -> existing custody-leaf preflight -> selected credential
+getpass -> locked state/private GET/schema/cohort -> custody readiness -> generation.
+Non-TTY/echo fallback fails closed. Executor then stages one successor, activates same
+S_app, compares private preimage, POSTs/reads back, probes fixed `/_tools` with final stored
+consumer key, and checkpoints COMPLETE. No token/body/header or child output is public.
+
+Observe only status/code/phase; exit 0 is COMPLETE, otherwise STOP. No automatic retry,
+rollback, credential revocation, cleanup or new-ID escape. Keep qualified existing custody
+leaf and retained `plan-a-20261026-001.lock`; lock alone/no blob is not an executed operation.
+Resume needs identical binding/ID; READY alone can continue, COMPLETE is acknowledgement,
+later/intent states require reconciliation. CLI's D0 preflight can reject after D1; do not
+change expected deployment to bypass binding. Preserve uncertain state for DC/SA-02 disposition.
+
+## Frozen 19-method local-fake acceptance — final 19 PASS
+
+Retain methods 01–13 and assertions (H0 tests 162–463). Bounded fixtures gain blocking fake
+boundaries/captured input; H0 request() 21, config() 42, cli_fixture() 283 remain anchors.
+Six methods appended after original test_13; only actual-stream TTY fixture fix after Red.
+- 14 `test_14_absolute_spec_url_literal_preservation`: known-failing absolute URL acceptance;
+  fake full preservation changes only key; existing relative paths and wrong-origin forms guard.
+- 15 `test_15_no_explicit_id_selection_and_preservation`: known-failing no-ID alternatives;
+  absent info/dict ID absent/null/empty preserve raw shape; auto/index, wrong type, ambiguity,
+  repeated indices and incomplete-cohort cases reject before generation/write.
+- 16 `test_16_cli_selector_forms_and_legacy_compatibility`: known-failing new two-arg flag;
+  repeated/mixed forms/order, closed shapes, arity/duplicate/count limits; legacy CLI retained.
+- 17 `test_17_existing_api_key_mode_owner_and_noecho`: known-failing explicit mode/prompt;
+  exact owner/mode coherence, no three new attestations, TTY/no-echo/sk-routing guards;
+  default JWT/binding retained and no early credential input/generation on guard failure.
+- 18 `test_18_config_http_bearer_and_denial_guards`: regression/added coverage, not known Red;
+  fake fixed GET/POST Bearer/exact envelope, 401/403/redirect/malformed/oversized failure,
+  initial private-read denial before generation; no assumption GET guarantees future POST.
+- 19 `test_19_binding_resume_and_secret_non_disclosure`: regression/added coverage, not known
+  Red; legacy binding, new mode/raw selectors bound distinctly, no replay or fake-key disclosure.
+Frozen group command (both invocations completed; no further run authorized): `python -B -m unittest
+discover -s tests -p test_plan_a_executor.py -v` (one continuous command).
+Use synthetic process/HTTP/input/random/custody boundaries only: no network, native command,
+real key generation, real DPAPI persistence or runtime action. Existing test_08 only reads
+application source for AST assertions; it does not authorize edits. Historical 13 Green is
+retained evidence, NOT PASS for new shapes; no assertion/import-error placeholder Red.
+
+## V0 refresh, gaps and separate delivery authorities
+
+Exact Open WebUI v0.8.10 upstream commit: `e4e69a10ec08a725bf2ab3db499ef664f2bd7570`.
+Source base: <https://github.com/open-webui/open-webui/tree/e4e69a10ec08a725bf2ab3db499ef664f2bd7570>.
+Critical files: backend/open_webui/utils/auth.py (get_current_user/by_api_key/get_admin_user),
+backend/open_webui/main.py (APIKeyRestrictionMiddleware), routers/configs.py (schema/GET/POST),
+utils/tools.py (get_tool_server_url/get_tool_servers_data); backend paths are under open_webui.
+UI: src/lib/components/chat/Settings/Account.svelte, AddToolServerModal.svelte,
+chat/Settings/Tools/Connection.svelte and admin/Settings/Integrations.svelte (under components).
+Official docs: <https://docs.openwebui.com/features/authentication-access/api-keys> and
+<https://docs.openwebui.com/reference/>; retrieved 2026-10-28, unversioned, not v0.8.10-pinned.
+Tagged source controls any newer docs header/UI differences; only fixed Authorization Bearer
+and first-party existing-key view are selected. API key resolves its owning admin, including
+SSO accounts; global enablement/restrictions still apply. No password-flow inference.
+Reuse only unchanged native/custody/transport baselines; do not promote source to runtime proof.
+
+Accepted source/local-validation gaps: upstream tests not qualified (SA-04 owns interpretation;
+mitigation is frozen local fakes, not invented upstream PASS); exact stored no-ID shape and
+existing-key feature/route/live validity UNVERIFIED (L2/DC own later authorized private
+preflight; stop before generation if ineligible); H0/cached-ref gap (SA-03 owns later exact
+publication provenance, no fetch now). UI blank/placeholder is not persisted-value proof.
+Key is indicated, not revealed/validated; first-party acquisition/use needs separate approval.
+
+Current authority: approved one bundled implementation plus local fake validation under
+all G0 controls above. Local completion grants no live authority or G5 publication consent.
+Branch/commit/push/PR/merge and any publisher pause/restoration require later exact SA-03
+itemization. Required feature-PR path is not a new CI gate. If separately approved, publisher
+guards target ONLY IDs 182507351/182507354, capture prior states and restore exactly; keep
+required Docker publishing active, no release/PyPI activation or workflow repair. No Git now.
+Final live approval/window remains separate: one complete cohort rotation, same-source
+activation, consumer update/readback and stored-consumer-key `/_tools` HTTP 200. Do not rerun
+old code rollout or C1; C1 stays closed, Plan B parked, aFPM paused. Runtime keys/cohort unchanged.
+
+---
+
 # Plan A MCPO private executor — amended execution brief
 
 ## Current follow-up cycle — direct DC checkpoint disposition
