@@ -2,6 +2,7 @@
 import ast
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -16,6 +17,7 @@ ORIGIN = "https://open-webui-mcpo-production.up.railway.app"
 OLD = "FAKE_PREDECESSOR_SENTINEL_ONLY"
 NEW = "FAKE_SUCCESSOR_SENTINEL_ONLY"
 JWT = "FAKE_ADMIN_JWT_SENTINEL_ONLY"
+ADMIN_API_KEY = "sk-FAKE_EXISTING_ADMIN_API_KEY_SENTINEL_ONLY"
 
 
 def request():
@@ -149,6 +151,26 @@ class PlanAExecutorEightCases(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertTrue(callable(getattr(module, "execute", None)),
                         "Requirement: closed request executor entrypoint must exist")
+        # Every external boundary is blocked before any tested entrypoint call.
+        # Individual fixtures replace these guards only with synthetic adapters.
+        opener = mock.Mock()
+        opener.open.side_effect = AssertionError("UNFAKED_HTTP_BOUNDARY")
+        guards = (
+            mock.patch.object(module.subprocess, "run", side_effect=AssertionError("UNFAKED_PROCESS_BOUNDARY")),
+            mock.patch.object(module.urllib.request, "build_opener", return_value=opener),
+            mock.patch.object(module.ssl, "create_default_context", return_value=mock.sentinel.fake_tls_context),
+            mock.patch.object(module.getpass, "getpass", side_effect=AssertionError("UNFAKED_INPUT_BOUNDARY")),
+            mock.patch.object(module.sys.stdin, "isatty", return_value=False),
+            mock.patch.object(module.sys.stderr, "isatty", return_value=False),
+            mock.patch.object(module.sys.stdin, "readline", side_effect=AssertionError("UNFAKED_OWNER_BOUNDARY")),
+            mock.patch.object(module.os, "name", "nt"),
+            mock.patch.object(module, "WindowsCustody", side_effect=AssertionError("UNFAKED_CUSTODY_BOUNDARY")),
+            mock.patch.object(module.secrets, "token_hex", side_effect=AssertionError("UNFAKED_RANDOM_BOUNDARY")),
+            mock.patch("builtins.input", side_effect=AssertionError("UNFAKED_INPUT_BOUNDARY")),
+        )
+        for guard in guards:
+            guard.start()
+            self.addCleanup(guard.stop)
         return module
 
     def run_case(self, module, req=None, backend=None, custody=None, activation=None):
@@ -281,21 +303,29 @@ class PlanAExecutorEightCases(unittest.TestCase):
         self.assertIn('logger.info(" API Key: %s", "Provided" if API_KEY else "Not provided")', source)
 
     def cli_fixture(self, m, *, stage_ack=None, activate_ack=None, context_bad=False,
-                    owner_missing=False, guard_missing=False, probe_fail=False):
-        req = request()
+                    owner_missing=False, guard_missing=False, probe_fail=False,
+                    req=None, value=None, selector_args=None, auth_mode=None,
+                    owner_patch=None, actual_prompt=False, credential=JWT, prompt_error=None):
+        req = copy.deepcopy(request() if req is None else req)
         d0 = req["expected_deployment"]
         d1 = "bbbbbbbb-1111-2222-3333-bbbbbbbbbbbb"
         workspace = "0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81"
         events, calls = [], []
         backend, custody = PrivateBackend(), MemoryCustody()
         backend.probe_fail = probe_fail
+        if value is not None:
+            backend.value = copy.deepcopy(value)
         owner = {"expected_target": req["expected_target"], "expected_source": req["expected_source"],
                  "expected_deployment": d0, "selectors": req["selectors"],
                  "qualification_reference": req["prerequisites"]["qualification_reference"],
                  "repository": "DC-AAIA/open-webui-mcpo", "branch": "main", "workspace": workspace,
                  "production_linked": True, "patched_source_active": True, "logging_protected": True,
-                 "exclusive_window": True, "complete_cohort": True, "private_admin_auth": True,
-                 "leaf_custody_qualified": True}
+                  "exclusive_window": True, "complete_cohort": True, "private_admin_auth": True,
+                  "leaf_custody_qualified": True}
+        if "admin_auth_mode" in req:
+            owner["admin_auth_mode"] = req["admin_auth_mode"]
+        if owner_patch:
+            owner.update(owner_patch)
         if owner_missing:
             owner["patched_source_active"] = False
         deployed = [False]
@@ -310,6 +340,7 @@ class PlanAExecutorEightCases(unittest.TestCase):
             self.assertEqual(kwargs["cwd"], r"C:\Projects\open-webui-mcpo")
             self.assertTrue(kwargs["capture_output"])
             self.assertNotIn(JWT, str(argv)); self.assertNotIn(NEW, str(argv))
+            self.assertNotIn(ADMIN_API_KEY, str(argv))
             args = argv[1:]
             if args == ["--version"]:
                 raw = "railway 4.40.0\n"
@@ -355,6 +386,15 @@ class PlanAExecutorEightCases(unittest.TestCase):
             if guard_missing:
                 raise m.PlanAError("NO_ECHO_REQUIRED")
             return JWT
+        prompts = []
+        def private_prompt(prompt):
+            prompts.append(prompt)
+            events.append("api-key" if prompt.startswith("Existing Open WebUI admin API key") else "jwt")
+            if prompt_error is not None:
+                raise prompt_error
+            if guard_missing:
+                raise m.PlanAError("NO_ECHO_REQUIRED")
+            return credential
         def generate(size):
             self.assertEqual(size, 32)
             self.assertIn("get", events)
@@ -363,25 +403,52 @@ class PlanAExecutorEightCases(unittest.TestCase):
         argv = ["rotate-mcpo", "--operation-id", req["operation_id"], "--approval-reference", req["approval_reference"],
             "--project", req["expected_target"]["project"], "--environment", req["expected_target"]["environment"],
             "--service", req["expected_target"]["service"], "--expected-source", req["expected_source"],
-            "--expected-deployment", d0, "--qualification-reference", req["prerequisites"]["qualification_reference"],
-            "--selector", ORIGIN, "openapi.json", "mcpo", "--phase", "execute",
+            "--expected-deployment", d0, "--qualification-reference", req["prerequisites"]["qualification_reference"]]
+        if selector_args is None:
+            selector_args = []
+            for selector in req["selectors"]:
+                if "info_id" in selector:
+                    selector_args.extend(["--selector", selector["url"], selector["path"], selector["info_id"]])
+                else:
+                    selector_args.extend(["--selector-no-id", selector["url"], selector["path"]])
+        argv.extend(selector_args)
+        if auth_mode is not None:
+            argv.extend(["--admin-auth-mode", auth_mode])
+        argv.extend(["--phase", req["phase"],
             "--logging-qualified", "--patched-source-qualified", "--exclusive-writer", "--auth-available"]
-        output = io.StringIO()
+        )
+        output, errors = io.StringIO(), io.StringIO()
+        backend.request_seen = None
+        original_execute = m.execute
+        def observed_execute(actual_req, *args):
+            backend.request_seen = copy.deepcopy(actual_req)
+            return original_execute(actual_req, *args)
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(m.subprocess, "run", side_effect=process))
-            stack.enter_context(mock.patch.object(m, "private_jwt", side_effect=jwt))
+            if actual_prompt:
+                stack.enter_context(mock.patch.object(m.getpass, "getpass", side_effect=private_prompt))
+            else:
+                stack.enter_context(mock.patch.object(m, "private_jwt", side_effect=jwt))
             stack.enter_context(mock.patch.object(m, "PrivateHTTP", return_value=backend))
             stack.enter_context(mock.patch.object(m, "WindowsCustody", return_value=custody))
+            stack.enter_context(mock.patch.object(m, "execute", side_effect=observed_execute))
             # Private nonsecret terminal input only, never an approval CLI flag.
             stack.enter_context(mock.patch.object(m.sys.stdin, "isatty", return_value=True))
             stack.enter_context(mock.patch.object(m.sys.stderr, "isatty", return_value=True))
             stack.enter_context(mock.patch.object(m.sys.stdin, "readline", return_value=json.dumps(owner) + "\n"))
             stack.enter_context(mock.patch.object(m.secrets, "token_hex", side_effect=generate))
             stack.enter_context(contextlib.redirect_stdout(output))
+            stack.enter_context(contextlib.redirect_stderr(errors))
+            # The production guard observes this redirected stream, not the old one.
+            stack.enter_context(mock.patch.object(errors, "isatty", return_value=True))
             exitcode = m.main(argv)
         result = json.loads(output.getvalue())
         for sentinel in (JWT, OLD, NEW, "FAKE_PRIVATE_STDERR"):
             self.assertNotIn(sentinel, output.getvalue())
+        for sentinel in (JWT, OLD, NEW, ADMIN_API_KEY, "FAKE_PRIVATE_STDERR"):
+            self.assertNotIn(sentinel, output.getvalue() + errors.getvalue())
+        backend.owner_input, backend.prompt_calls = owner, prompts
+        backend.public_output = output.getvalue() + errors.getvalue()
         return result, exitcode, events, calls, backend, custody
 
     def test_09_actual_cli_native_order_and_exact_ack_success(self):
@@ -461,6 +528,307 @@ class PlanAExecutorEightCases(unittest.TestCase):
         response.status = 401
         with self.assertRaises(m.PlanAError):
             client.probe_tools("FAKE_STORED_READBACK_KEY")
+
+    def test_14_absolute_spec_url_literal_preservation(self):
+        m = self.implementation()
+        for path in ("openapi.json", "/openapi.json", "nested/openapi.json", ORIGIN + "/openapi.json"):
+            with self.subTest(accepted_path=path):
+                req, backend = request(), PrivateBackend()
+                req["selectors"][0]["path"] = path
+                backend.value["TOOL_SERVER_CONNECTIONS"][1]["path"] = path
+                before = copy.deepcopy(backend.value)
+                r, b, c, a, generated = self.run_case(m, req, backend)
+                self.assertEqual(r["status"], "COMPLETE", "Literal qualified absolute spec URL must be supported")
+                expected = copy.deepcopy(before)
+                expected["TOOL_SERVER_CONNECTIONS"][1]["key"] = NEW
+                self.assertEqual(b.value, expected)
+                self.assertEqual(b.value["TOOL_SERVER_CONNECTIONS"][1]["path"], path)
+                self.assertEqual((generated, b.writes, b.posts, a.calls), (1, 1, 1, 1))
+        for path in ("https://unrelated.example/openapi.json", ORIGIN.replace("https:", "http:") + "/openapi.json",
+                     ORIGIN + ":443/openapi.json", ORIGIN.replace("https://", "https://user@") + "/openapi.json",
+                     ORIGIN + "/openapi.json?x=1", ORIGIN + "/openapi.json#fragment",
+                     ORIGIN + "/%6Fpenapi.json", ORIGIN + "/../openapi.json", ORIGIN + "//openapi.json"):
+            with self.subTest(rejected_path=path):
+                req = request(); req["selectors"][0]["path"] = path
+                r, b, c, a, generated = self.run_case(m, req)
+                self.assertEqual(r["status"], "REJECTED")
+                self.assertEqual((b.gets, b.writes, b.posts, c.writes, a.calls, generated), (0, 0, 0, 0, 0, 0))
+
+    def test_15_no_explicit_id_selection_and_preservation(self):
+        m = self.implementation()
+        selector = {"url": ORIGIN, "path": "openapi.json", "no_explicit_id": True}
+        for shape in ("missing-info", "missing-id", "null-id", "empty-id"):
+            with self.subTest(accepted_shape=shape):
+                req, backend = request(), PrivateBackend()
+                req["selectors"] = [copy.deepcopy(selector)]
+                entry = backend.value["TOOL_SERVER_CONNECTIONS"][1]
+                if shape == "missing-info":
+                    entry.pop("info")
+                elif shape == "missing-id":
+                    entry["info"].pop("id")
+                else:
+                    entry["info"]["id"] = None if shape == "null-id" else ""
+                before = copy.deepcopy(backend.value)
+                r, b, c, a, generated = self.run_case(m, req, backend)
+                self.assertEqual(r["status"], "COMPLETE", "Explicit no-ID selection must preserve the stored shape")
+                expected = copy.deepcopy(before); expected["TOOL_SERVER_CONNECTIONS"][1]["key"] = NEW
+                self.assertEqual(b.value, expected)
+                self.assertEqual((generated, b.writes, b.posts, a.calls), (1, 1, 1, 1))
+        variants = []
+        for info in (None, [], "", False, {"id": 0}, {"id": False}, {"id": []}, {"id": {}},
+                     {"id": "auto"}, {"id": "1"}):
+            backend = PrivateBackend(); backend.value["TOOL_SERVER_CONNECTIONS"][1]["info"] = info
+            req = request(); req["selectors"] = [copy.deepcopy(selector)]
+            variants.append((req, backend))
+        for extra in ({"no_explicit_id": False}, {"no_explicit_id": 1}, {"info_id": "mcpo"}, {"extra": True}):
+            req = request(); req["selectors"] = [{**selector, **extra}]
+            variants.append((req, PrivateBackend()))
+        for shape in ("ambiguous", "incomplete"):
+            backend = PrivateBackend()
+            entry = backend.value["TOOL_SERVER_CONNECTIONS"][1]; entry["info"].pop("id")
+            other = copy.deepcopy(entry)
+            if shape == "incomplete":
+                other["path"] = "/outside/openapi.json"
+            backend.value["TOOL_SERVER_CONNECTIONS"].append(other)
+            req = request(); req["selectors"] = [copy.deepcopy(selector)]
+            variants.append((req, backend))
+        req = request(); req["selectors"] = [copy.deepcopy(selector), copy.deepcopy(selector)]
+        variants.append((req, PrivateBackend()))
+        for index, (req, backend) in enumerate(variants):
+            with self.subTest(rejected_variant=index):
+                r, b, c, a, generated = self.run_case(m, req, backend)
+                self.assertEqual(r["status"], "REJECTED")
+                self.assertEqual((b.writes, b.posts, c.writes, a.calls, generated), (0, 0, 0, 0, 0))
+        with self.subTest(repeated_match_index=True):
+            explicit = request()["selectors"][0]
+            with self.assertRaises(m.PlanAError):
+                m.select_cohort(config(), [explicit, copy.deepcopy(explicit)])
+        with self.subTest(literal_auto_requires_actual_stored_id=True):
+            req, backend = request(), PrivateBackend()
+            req["selectors"][0]["info_id"] = "auto"
+            backend.value["TOOL_SERVER_CONNECTIONS"][1]["info"]["id"] = "auto"
+            r, *_ = self.run_case(m, req, backend)
+            self.assertEqual(r["status"], "COMPLETE")
+        with self.subTest(derived_index_is_not_stored_id=True):
+            req, backend = request(), PrivateBackend()
+            req["selectors"][0]["info_id"] = "1"
+            backend.value["TOOL_SERVER_CONNECTIONS"][1]["info"].pop("id")
+            r, b, c, a, generated = self.run_case(m, req, backend)
+            self.assertEqual(r["status"], "REJECTED")
+            self.assertEqual((generated, b.writes, b.posts), (0, 0, 0))
+
+    def test_16_cli_selector_forms_and_legacy_compatibility(self):
+        m = self.implementation()
+        req, value = request(), config()
+        req["selectors"] = [
+            {"url": ORIGIN, "path": "openapi.json", "info_id": "mcpo"},
+            {"url": ORIGIN, "path": "/named/openapi.json", "info_id": "second"},
+            {"url": ORIGIN, "path": ORIGIN + "/openapi.json", "no_explicit_id": True},
+            {"url": ORIGIN, "path": "blank/openapi.json", "no_explicit_id": True},
+        ]
+        for selector in req["selectors"][1:]:
+            entry = copy.deepcopy(value["TOOL_SERVER_CONNECTIONS"][1])
+            entry["path"] = selector["path"]
+            if "info_id" in selector:
+                entry["info"]["id"] = selector["info_id"]
+            else:
+                entry["info"].pop("id")
+            value["TOOL_SERVER_CONNECTIONS"].append(entry)
+        interleaved = ["--selector-no-id", ORIGIN, ORIGIN + "/openapi.json",
+                       "--selector", ORIGIN, "openapi.json", "mcpo",
+                       "--selector-no-id", ORIGIN, "blank/openapi.json",
+                       "--selector", ORIGIN, "/named/openapi.json", "second"]
+        with self.subTest(mixed_repeatable_flags=True):
+            r, exitcode, events, calls, b, c = self.cli_fixture(m, req=req, value=value, selector_args=interleaved)
+            self.assertEqual(r["status"], "COMPLETE", "Actual closed CLI must accept repeatable two-argument no-ID selectors")
+            self.assertEqual(exitcode, 0)
+            self.assertEqual(b.request_seen, req)
+            self.assertEqual(b.owner_input["selectors"], req["selectors"])
+            self.assertEqual([e["key"] for e in b.value["TOOL_SERVER_CONNECTIONS"]], ["OTHER", NEW, NEW, NEW, NEW])
+        with self.subTest(legacy_cli=True):
+            r, exitcode, events, calls, b, c = self.cli_fixture(m)
+            self.assertEqual((r["status"], exitcode), ("COMPLETE", 0))
+            self.assertEqual(b.request_seen, request())
+        invalid_args = [[], ["--selector-no-id", ORIGIN], ["--selector", ORIGIN, "openapi.json"],
+                        ["--selector", ORIGIN, "openapi.json", "mcpo"] * 2,
+                        ["--selector", ORIGIN, "openapi.json", "mcpo"] * 33]
+        for args in invalid_args:
+            with self.subTest(invalid_argv=args):
+                r, exitcode, events, calls, b, c = self.cli_fixture(m, selector_args=args)
+                self.assertEqual((r["code"], exitcode), ("INVALID_REQUEST", 2))
+                self.assertEqual((events, calls, b.posts, c.writes), ([], [], 0, 0))
+        with self.subTest(combined_count_limit=True):
+            req = request()
+            req["selectors"] = [{"url": ORIGIN, "path": "openapi.json", "info_id": "server" + str(i)} for i in range(32)]
+            m.validate_request(req)
+            for selectors in ([], req["selectors"] + [{"url": ORIGIN, "path": "openapi.json", "info_id": "extra"}]):
+                invalid = copy.deepcopy(req); invalid["selectors"] = selectors
+                with self.assertRaises(m.PlanAError):
+                    m.validate_request(invalid)
+
+    def test_17_existing_api_key_mode_owner_and_noecho(self):
+        m = self.implementation()
+        api_req = request(); api_req["admin_auth_mode"] = "existing-api-key"
+        jwt_prompt = "Existing current Open WebUI admin JWT (private, no echo): "
+        api_prompt = "Existing Open WebUI admin API key (private, no echo; existing key only): "
+        prohibited = {"existing_admin_api_key_qualified", "api_key_feature_enabled", "api_key_config_route_permitted"}
+        with self.subTest(explicit_api_key_mode=True):
+            r, exitcode, events, calls, b, c = self.cli_fixture(
+                m, req=api_req, auth_mode="existing-api-key", actual_prompt=True, credential=ADMIN_API_KEY)
+            self.assertEqual((r["status"], exitcode), ("COMPLETE", 0), "Explicit existing-key mode must reach the fake engine")
+            self.assertEqual(b.request_seen, api_req)
+            self.assertEqual(b.prompt_calls, [api_prompt])
+            self.assertEqual(events, ["api-key", "get", "generate", "stage", "activate", "get", "post", "get", "probe"])
+            self.assertEqual(set(b.owner_input), set(m.owner_contract(request())) | {"admin_auth_mode"})
+            self.assertTrue(prohibited.isdisjoint(b.owner_input))
+            self.assertEqual(b.owner_input, m.owner_contract(api_req))
+            self.assertEqual(b.probes, [NEW])
+        for mode in (None, "jwt"):
+            with self.subTest(legacy_jwt_mode=mode):
+                r, exitcode, events, calls, b, c = self.cli_fixture(m, auth_mode=mode, actual_prompt=True)
+                self.assertEqual((r["status"], exitcode), ("COMPLETE", 0))
+                self.assertEqual(b.request_seen, request())
+                self.assertNotIn("admin_auth_mode", b.owner_input)
+                self.assertEqual(b.prompt_calls, [jwt_prompt])
+        for req, mode, credential in ((request(), None, ADMIN_API_KEY), (api_req, "existing-api-key", JWT)):
+            with self.subTest(cross_mode_credential=mode):
+                r, exitcode, events, calls, b, c = self.cli_fixture(
+                    m, req=req, auth_mode=mode, actual_prompt=True, credential=credential)
+                self.assertEqual((r["code"], exitcode), ("NO_ECHO_REQUIRED", 2))
+                self.assertNotIn("get", events)
+                self.assertNotIn("generate", events)
+                self.assertEqual((b.posts, c.writes), (0, 0))
+        for credential, error in (("", None), ("sk-FAKE WITH SPACE", None),
+                                  (ADMIN_API_KEY, m.getpass.GetPassWarning("FAKE_NO_ECHO_WARNING"))):
+            with self.subTest(noecho_credential=credential, warning=error is not None):
+                r, exitcode, events, calls, b, c = self.cli_fixture(
+                    m, req=api_req, auth_mode="existing-api-key", actual_prompt=True,
+                    credential=credential, prompt_error=error)
+                self.assertEqual((r["code"], exitcode), ("NO_ECHO_REQUIRED", 2))
+                self.assertNotIn("generate", events)
+                self.assertEqual((b.posts, c.writes), (0, 0))
+        for patch in ({"admin_auth_mode": None}, {"admin_auth_mode": "jwt"},
+                      *({name: True} for name in sorted(prohibited))):
+            with self.subTest(owner_mode_or_extra=patch):
+                r, exitcode, events, calls, b, c = self.cli_fixture(
+                    m, req=api_req, auth_mode="existing-api-key", owner_patch=patch,
+                    actual_prompt=True, credential=ADMIN_API_KEY)
+                self.assertEqual((r["code"], exitcode), ("SOURCE_OWNER_CONFIRMATION_REQUIRED", 2))
+                self.assertEqual((events, calls, b.prompt_calls, b.posts, c.writes), ([], [], [], 0, 0))
+        with self.subTest(unsupported_auth_mode=True):
+            r, exitcode, events, calls, b, c = self.cli_fixture(m, auth_mode="password")
+            self.assertEqual((r["code"], exitcode), ("INVALID_REQUEST", 2))
+            self.assertEqual((events, calls, b.posts, c.writes), ([], [], 0, 0))
+        for field in ("stdin", "stderr"):
+            with self.subTest(non_tty=field):
+                with mock.patch.object(getattr(m.sys, field), "isatty", return_value=False):
+                    with self.assertRaises(m.PlanAError) as caught:
+                        m.private_jwt()
+                self.assertEqual(caught.exception.code, "NO_ECHO_REQUIRED")
+        with self.subTest(non_windows=True):
+            with mock.patch.object(m.os, "name", "posix"):
+                with self.assertRaises(m.PlanAError) as caught:
+                    m.private_jwt()
+            self.assertEqual(caught.exception.code, "NO_ECHO_REQUIRED")
+
+    def test_18_config_http_bearer_and_denial_guards(self):
+        m = self.implementation()
+        value = {"TOOL_SERVER_CONNECTIONS": copy.deepcopy(config()["TOOL_SERVER_CONNECTIONS"])}
+        for entry in value["TOOL_SERVER_CONNECTIONS"]:
+            entry["config"] = {}
+        def response_for(status=200, url=None, body=None):
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.status = status
+            response.geturl.return_value = m.CONFIG_URL if url is None else url
+            response.read.return_value = json.dumps(value).encode() if body is None else body
+            return response
+        for credential in (JWT, ADMIN_API_KEY):
+            with self.subTest(config_bearer=credential):
+                opener = mock.Mock(); opener.open.return_value = response_for()
+                with mock.patch.object(m.urllib.request, "build_opener", return_value=opener):
+                    client = m.PrivateHTTP(credential)
+                self.assertEqual(client.get_config(), value)
+                client.post_config(value)
+                requests = [call.args[0] for call in opener.open.call_args_list]
+                self.assertEqual([req.get_method() for req in requests], ["GET", "POST"])
+                self.assertEqual([req.full_url for req in requests], [m.CONFIG_URL, m.CONFIG_URL])
+                self.assertEqual([req.get_header("Authorization") for req in requests], ["Bearer " + credential] * 2)
+                self.assertEqual(json.loads(requests[1].data), value)
+                self.assertTrue(all(call.kwargs == {"timeout": m.TIMEOUT} for call in opener.open.call_args_list))
+        failures = [response_for(status=401), response_for(status=403),
+                    response_for(url=ORIGIN + "/redirected"), response_for(body=b'{"TOOL_SERVER_CONNECTIONS":'),
+                    response_for(body=b"x" * (m.MAX_RESPONSE + 1)),
+                    response_for(body=b'{"TOOL_SERVER_CONNECTIONS":[],"extra":true}'),
+                    response_for(body=b'{"TOOL_SERVER_CONNECTIONS":[],"TOOL_SERVER_CONNECTIONS":[]}')]
+        for index, response in enumerate(failures):
+            with self.subTest(initial_private_get_failure=index):
+                opener = mock.Mock(); opener.open.return_value = response
+                with mock.patch.object(m.urllib.request, "build_opener", return_value=opener):
+                    client = m.PrivateHTTP(ADMIN_API_KEY)
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    r, b, c, a, generated = self.run_case(m, backend=client)
+                self.assertEqual(r, {"status": "REJECTED", "code": "PRIVATE_READ_FAILED", "phase": "PREFLIGHT"})
+                self.assertEqual((generated, c.writes, a.calls, opener.open.call_count), (0, 0, 0, 1))
+                self.assertEqual(opener.open.call_args.args[0].get_method(), "GET")
+                m.subprocess.run.assert_not_called()
+                self.assertEqual(out.getvalue() + err.getvalue(), "")
+                for sentinel in (ADMIN_API_KEY, JWT, OLD, NEW):
+                    self.assertNotIn(sentinel, json.dumps(r))
+
+    def test_19_binding_resume_and_secret_non_disclosure(self):
+        m = self.implementation()
+        legacy = request()
+        expected = hashlib.sha256(json.dumps({k: v for k, v in legacy.items() if k != "phase"},
+                                             sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(m.binding(legacy), expected)
+        api_req = copy.deepcopy(legacy); api_req["admin_auth_mode"] = "existing-api-key"
+        noid_req = copy.deepcopy(legacy)
+        noid_req["selectors"] = [{"url": ORIGIN, "path": "openapi.json", "no_explicit_id": True}]
+        absolute_req = copy.deepcopy(legacy); absolute_req["selectors"][0]["path"] = ORIGIN + "/openapi.json"
+        for changed in (api_req, noid_req, absolute_req):
+            self.assertNotEqual(m.binding(changed), expected)
+        resume = copy.deepcopy(legacy); resume["phase"] = "resume"
+        self.assertEqual(m.binding(resume), expected)
+        left, right = config(), config()
+        left["TOOL_SERVER_CONNECTIONS"][1]["info"].pop("id")
+        right["TOOL_SERVER_CONNECTIONS"][1]["info"]["id"] = None
+        self.assertNotEqual(m.normalized(left), m.normalized(right))
+        right = copy.deepcopy(left); right["TOOL_SERVER_CONNECTIONS"][1]["path"] = ORIGIN + "/openapi.json"
+        self.assertNotEqual(m.normalized(left), m.normalized(right))
+        r, backend, custody, activation, generated = self.run_case(m)
+        self.assertEqual(r["status"], "COMPLETE")
+        counts = (backend.writes, backend.posts, activation.calls, custody.writes)
+        for changed in (api_req, noid_req, absolute_req):
+            with self.subTest(changed_binding_resume=changed):
+                changed = copy.deepcopy(changed); changed["phase"] = "resume"
+                r, b, c, a, generated = self.run_case(m, changed, backend, custody, activation)
+                self.assertNotEqual(r["status"], "COMPLETE")
+                self.assertEqual((b.writes, b.posts, a.calls, c.writes), counts)
+                self.assertEqual(generated, 0)
+        for phase in ("SECRET_WRITE_INTENT", "ACTIVATION_INTENT", "CONFIG_POST_INTENT", "PROBE_INTENT"):
+            with self.subTest(unknown_intent=phase):
+                c = MemoryCustody(); c.record = {"binding": expected, "successor": NEW, "phase": phase}
+                r, b, c, a, generated = self.run_case(m, resume, custody=c)
+                self.assertEqual(r["code"], "UNKNOWN_EFFECTS")
+                self.assertEqual((b.gets, b.writes, b.posts, a.calls, generated), (0, 0, 0, 0, 0))
+        with self.subTest(ready_resume_reuses_successor=True):
+            c = MemoryCustody(); c.record = {"binding": expected, "successor": NEW, "phase": "READY"}
+            r, b, c, a, generated = self.run_case(m, resume, custody=c)
+            self.assertEqual(r["status"], "COMPLETE")
+            self.assertEqual((generated, b.writes, b.posts, a.calls), (0, 1, 1, 1))
+            for sentinel in (ADMIN_API_KEY, JWT, OLD):
+                self.assertNotIn(sentinel, json.dumps(c.record))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            client = m.PrivateHTTP(ADMIN_API_KEY)
+            client._opener.open.side_effect = OSError(ADMIN_API_KEY + JWT + OLD + NEW)
+            with self.assertRaises(m.PlanAError) as caught:
+                client.get_config()
+        public = out.getvalue() + err.getvalue() + str(caught.exception)
+        for sentinel in (ADMIN_API_KEY, JWT, OLD, NEW):
+            self.assertNotIn(sentinel, public)
 
 
 if __name__ == "__main__":

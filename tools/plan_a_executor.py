@@ -1,7 +1,7 @@
 """Bounded Plan A private executor. Stdlib only; never run via model tools.
 
 The private CLI binds qualified native context and current owner source evidence
-before JWT input. Tests use fake boundaries; no live qualification is implied.
+before existing admin bearer input. Tests use fake boundaries; no live qualification is implied.
 """
 import argparse
 import contextlib
@@ -71,7 +71,9 @@ def validate_request(req):
     try:
         fields = {"operation_id", "approval_reference", "expected_target", "expected_source",
                   "expected_deployment", "selectors", "phase", "prerequisites"}
-        if type(req) is not dict or set(req) != fields:
+        if type(req) is not dict or set(req) not in (fields, fields | {"admin_auth_mode"}):
+            raise ValueError
+        if "admin_auth_mode" in req and req["admin_auth_mode"] != "existing-api-key":
             raise ValueError
         if not isinstance(req["operation_id"], str) or not SAFE_ID.fullmatch(req["operation_id"]):
             raise ValueError
@@ -86,16 +88,24 @@ def validate_request(req):
             raise ValueError
         tuples = []
         for selector in selectors:
-            if type(selector) is not dict or set(selector) != {"url", "path", "info_id"}:
+            if type(selector) is not dict:
+                raise ValueError
+            explicit_id = set(selector) == {"url", "path", "info_id"}
+            if not explicit_id and (set(selector) != {"url", "path", "no_explicit_id"}
+                                    or selector["no_explicit_id"] is not True):
                 raise ValueError
             if selector["url"] != MCPO_ORIGIN:
                 raise ValueError
             path = selector["path"]
-            if not isinstance(path, str) or not re.fullmatch(r"/?[A-Za-z0-9_/-]*openapi\.json", path) or "//" in path:
+            if not isinstance(path, str):
                 raise ValueError
-            if not isinstance(selector["info_id"], str) or not SAFE_ID.fullmatch(selector["info_id"]):
+            # Validate a view of the suffix; never rewrite the bound/stored path.
+            suffix = path[len(MCPO_ORIGIN):] if path.startswith(MCPO_ORIGIN + "/") else path
+            if not re.fullmatch(r"/?[A-Za-z0-9_/-]*openapi\.json", suffix) or "//" in suffix:
                 raise ValueError
-            tuples.append((selector["url"], path, selector["info_id"]))
+            if explicit_id and (not isinstance(selector["info_id"], str) or not SAFE_ID.fullmatch(selector["info_id"])):
+                raise ValueError
+            tuples.append((selector["url"], path, explicit_id, selector["info_id"] if explicit_id else None))
         if len(set(tuples)) != len(tuples):
             raise ValueError
         pre = req["prerequisites"]
@@ -126,6 +136,20 @@ def normalized(value):
     return value
 
 
+def _selector_id_matches(entry, selector):
+    info = entry.get("info")
+    if "info_id" in selector:
+        return type(info) is dict and info.get("id") == selector["info_id"]
+    if selector.get("no_explicit_id") is not True:
+        return False
+    if "info" not in entry:
+        return True
+    if type(info) is not dict:
+        return False
+    value = info.get("id")
+    return value is None or (type(value) is str and value == "")
+
+
 def select_cohort(value, selectors):
     try:
         entries = value["TOOL_SERVER_CONNECTIONS"]
@@ -135,10 +159,12 @@ def select_cohort(value, selectors):
         for selector in selectors:
             found = [i for i, e in enumerate(entries) if type(e) is dict
                      and e.get("url") == selector["url"] and e.get("path") == selector["path"]
-                     and type(e.get("info")) is dict and e["info"].get("id") == selector["info_id"]]
+                     and _selector_id_matches(e, selector)]
             if len(found) != 1:
                 raise ValueError
             matches.extend(found)
+        if len(set(matches)) != len(matches):
+            raise ValueError
         keys = []
         for i in matches:
             e = entries[i]
@@ -299,7 +325,7 @@ def _json_pairs(pairs):
 
 
 class PrivateHTTP:
-    """Fixed-origin private JWT boundary; never exposes response/error text."""
+    """Fixed-origin private admin bearer boundary; never exposes response/error text."""
     def __init__(self, jwt):
         if not isinstance(jwt, str) or not jwt or any(c.isspace() for c in jwt):
             raise PlanAError("NO_ECHO_REQUIRED")
@@ -395,13 +421,16 @@ def private_json(raw):
 
 
 def owner_contract(req):
-    return {"expected_target": TARGET, "expected_source": req["expected_source"],
+    owner = {"expected_target": TARGET, "expected_source": req["expected_source"],
             "expected_deployment": req["expected_deployment"], "selectors": req["selectors"],
             "qualification_reference": req["prerequisites"]["qualification_reference"],
             "repository": REPOSITORY, "branch": "main", "workspace": WORKSPACE,
             "production_linked": True, "patched_source_active": True, "logging_protected": True,
             "exclusive_window": True, "complete_cohort": True, "private_admin_auth": True,
             "leaf_custody_qualified": True}
+    if req.get("admin_auth_mode") == "existing-api-key":
+        owner["admin_auth_mode"] = "existing-api-key"
+    return owner
 
 
 def private_owner_confirmation(req):
@@ -769,19 +798,27 @@ class WindowsCustody:
         self._qualify(self.path)
 
 
-def private_jwt():
+def _private_admin_bearer(prompt, *, api_key):
     # Windows getpass uses msvcrt; disallow redirected stdin and fallback echo.
     if os.name != "nt" or not sys.stdin.isatty() or not sys.stderr.isatty():
         raise PlanAError("NO_ECHO_REQUIRED")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
-            value = getpass.getpass("Existing current Open WebUI admin JWT (private, no echo): ")
-        if not value or any(c.isspace() for c in value):
+            value = getpass.getpass(prompt)
+        if not value or any(c.isspace() for c in value) or value.startswith("sk-") != api_key:
             raise ValueError
         return value
     except BaseException:
         raise PlanAError("NO_ECHO_REQUIRED") from None
+
+
+def private_jwt():
+    return _private_admin_bearer("Existing current Open WebUI admin JWT (private, no echo): ", api_key=False)
+
+
+def private_api_key():
+    return _private_admin_bearer("Existing Open WebUI admin API key (private, no echo; existing key only): ", api_key=True)
 
 
 class ClosedParser(argparse.ArgumentParser):
@@ -796,7 +833,9 @@ def main(argv=None):
         for name in ("operation-id", "approval-reference", "project", "environment", "service",
                      "expected-source", "expected-deployment", "qualification-reference"):
             parser.add_argument("--" + name, required=True)
-        parser.add_argument("--selector", nargs=3, action="append", required=True, metavar=("URL", "PATH", "INFO_ID"))
+        parser.add_argument("--selector", nargs=3, action="append", metavar=("URL", "PATH", "INFO_ID"))
+        parser.add_argument("--selector-no-id", nargs=2, action="append", metavar=("URL", "PATH"))
+        parser.add_argument("--admin-auth-mode", choices=["jwt", "existing-api-key"], default="jwt")
         parser.add_argument("--phase", choices=["execute", "resume"], required=True)
         for name in ("logging-qualified", "patched-source-qualified", "exclusive-writer", "auth-available"):
             parser.add_argument("--" + name, action="store_true")
@@ -804,19 +843,23 @@ def main(argv=None):
         req = {"operation_id": args.operation_id, "approval_reference": args.approval_reference,
                "expected_target": {"project": args.project, "environment": args.environment, "service": args.service},
                "expected_source": args.expected_source, "expected_deployment": args.expected_deployment,
-               "selectors": [dict(zip(("url", "path", "info_id"), values)) for values in args.selector],
+               "selectors": [dict(zip(("url", "path", "info_id"), values)) for values in (args.selector or [])]
+                            + [{"url": url, "path": path, "no_explicit_id": True}
+                               for url, path in (args.selector_no_id or [])],
                "phase": args.phase, "prerequisites": {
                    "logging_qualified": args.logging_qualified, "patched_source_qualified": args.patched_source_qualified,
                    "exclusive_writer": args.exclusive_writer, "auth_available": args.auth_available,
-                   "qualification_reference": args.qualification_reference}}
+                    "qualification_reference": args.qualification_reference}}
+        if args.admin_auth_mode == "existing-api-key":
+            req["admin_auth_mode"] = "existing-api-key"
         validate_request(req)
         owner = private_owner_confirmation(req)
         activation = NativeActivation(owner)
         activation.preflight(req)
         custody = WindowsCustody(req["operation_id"])
-        custody.preflight()  # Missing/unqualified leaf holds before JWT/real key.
-        jwt = private_jwt()
-        backend = NativeBackend(PrivateHTTP(jwt), activation, req)
+        custody.preflight()  # Missing/unqualified leaf holds before admin input/real key.
+        admin_bearer = private_api_key() if args.admin_auth_mode == "existing-api-key" else private_jwt()
+        backend = NativeBackend(PrivateHTTP(admin_bearer), activation, req)
         result = execute(req, backend, custody, activation)
     except PlanAError as exc:
         result = receipt("REJECTED", exc.code)
