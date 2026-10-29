@@ -1,3 +1,305 @@
+# CURRENT_READER_CORRECTION_RECORD — 2026-10-29
+
+OUTPUT_CLASSIFICATION: READER_CORRECTION_LOCAL_AND_OPERATOR_CONSOLE_ACCEPTANCE
+STATUS: LOCAL_20_OF_20_PASS / ACTUAL_OPERATOR_CONSOLE_PASS_839 / NO_THIRD_LIVE_ATTEMPT
+Authority: direct DC reader-only correction approval, 2026-10-29T13:37:15Z.
+Root/source: `ses_e9ec4eb10ffeFJ0M0VImdMXKvD`; author SA-04 `ses_e80edc393ffeCSoBcywmtWshUh`.
+Target: `DC-AAIA/open-webui-mcpo`; exactly existing helper/tests/brief, no new artifact.
+This complete record through its separator/trailing blank line is the current bounded artifact.
+The entire previous 70,240-byte brief is retained verbatim below as HISTORY, including its
+old operator retry release: that is NOT permission for a third real main/execute attempt.
+Current authority excludes Git publication, real transaction, credentials, authenticated
+HTTP, native Railway, DPAPI, journal/state cleanup, installation or role/permission changes.
+
+## Approved G0 / evidence / unchanged boundaries
+
+1. Maximum three maintained files: `tools/plan_a_executor.py`, `tests/test_plan_a_executor.py`,
+   `docs/Plan_A_MCPO_Executor_Brief_2026-10-25.md`; application core is only a read-only guard.
+2. Frozen Done: retain all 19 assertions/methods; add exactly
+   `test_20_owner_confirmation_long_input_tty_and_bounds`; 20 local methods PASS plus
+   the separate actual Windows 3.13.6 nonsecret 839-character OWNER-FUNCTION proof below.
+3. Concrete scenario: trusted operator's complete legitimate owner JSON is truncated by
+   the Windows reader, preventing owner confirmation despite valid public input.
+4. Exactly one bundled material correction and one final validation; at most two group
+   invocations: observed pre-change Red, then final Green. No extra repair/rerun after Green.
+5. Assurance classification: exactly `accidental-drift assurance`.
+
+Window: `2026-10-29T13:37:35.1201855Z` to no-wait checkpoint `14:22:35.1201855Z`.
+45 active minutes; genuine human waiting occurred for the operator proof requested below.
+Record only known request/observed-receipt timestamps; answer-to-observation processing gap
+is not separately measured. No exact active/remaining/wait-duration arithmetic or reset.
+Retain all prior software cycles/counters and two interpretable live preflight REJECTEDs
+before native/custody/key/GET/generation/write. No budget-free no-effect reclassification.
+Pre-bundle immutable-file guard passed at 13:58:08.0245276Z. First following helper write
+opened reader material cycle 1/1, closed by local final acceptance and now the distinct
+actual-operator console criterion below. No additional source correction/test run is granted.
+
+Observed Red, exact frozen group: `python -B -m unittest discover -s tests -p test_plan_a_executor.py -v`.
+20 methods in 0.700s; failures=2, errors/collection errors/skips=0. All retained 19 PASS.
+Only method20 fails: full839 input via modeled old510 reader (test893), missing explicit
+prompt flush (test897). Bounds/truncation/EOF/non-TTY/malformed/no-downstream guards PASS.
+No missing-symbol/import/fixture failure; no post-Red test/assertion changes.
+
+Observed final group 2/2, after candidate freeze 13:59:50.5338031Z:
+
+```text
+python -B -m unittest discover -s tests -p test_plan_a_executor.py -v
+Ran 20 tests in 0.538s
+OK
+```
+
+All retained 19 plus new method20 PASS; failures/errors/collection errors/skips=0.
+Post-Green byte verification at 2026-10-29T14:00:39.3060311Z matched the tested candidate.
+Exactly two group invocations and one bundled material correction this approval; prior
+counters/live REJECTEDs remain retained; human-wait provenance is below. No post-Green helper/test
+edit, refactor or confirmatory run. Only this truthful brief closeout follows acceptance.
+Green-tested reader R SHA-256: `465CF97CFABDB70387EA2D81E924F21FFAD4ED31881496E45D38DF0C312A0075`.
+Frozen tests SHA-256: `E7183F493CB5F1BEC86457BC37712913453107B429A4D657D2F5204650415395`.
+Application guard unchanged: `886C7D006F3BDB572A00A50BD3400606AC140D7BDAF62AB5611A3A8012C2521F`.
+The captured fake suite alone is not TTY proof; separate operator-reported acceptance follows.
+No real credential, main/execute transaction, HTTP/native/DPAPI/random successor/journal,
+state cleanup, Git/CI/publication, new artifact or application deployment was performed.
+
+### Actual operator console acceptance — completed, not a Tool-generated result
+
+Root issued the complete pure owner-function command and 839-character public JSON only
+at `2026-10-29T14:10:46.8247245Z`. Root observed/acknowledged the answer at
+`2026-10-29T16:34:44.9324888Z`. DC selected `PASS: 839 characters`, whose exact description
+was: the console printed `OWNER_INPUT_PROOF_PASS canonical_chars=839` and returned to
+PowerShell without asking for a key. This is operator-confirmed actual standalone Windows/
+Python 3.13.6 evidence, NOT independent Root console capture or a captured-tool TTY result.
+No API-key prompt was reported. The diagnostic calls only the corrected owner function;
+it cannot enter main/execute/native activation/HTTP/custody/generation through that call.
+All 20 local methods plus the actual public 839-character console criterion are now met,
+closing this bounded reader correction WITHOUT confirmatory run or another code cycle.
+Material code/tests finished before the original no-wait checkpoint; genuine human waiting
+is excluded, but its exact active/processing split is unmeasured and is not invented here.
+Both historical live owner REJECTEDs, local 2 group invocations/1 reader correction and ALL
+prior counters remain unchanged. The owner-only diagnostic is not a third real transaction.
+This public-fixture success establishes NO authentication eligibility, private complete
+cohort, native stage, key validity, workspace/Production or other runtime qualification.
+WHOLE-PROJECT FULL LIVE DONE: NOT MET. No third real attempt, publisher/commit/publication,
+new code work, state cleanup or credential transaction approval is inferred.
+
+## G7/V0 source diagnosis and smallest source correction
+
+Actual operator Python is 3.13.6. Canonical owner JSON: 839 ASCII characters/bytes; displayed
+prefix: 510. 510 payload + CRLF = 512 UTF-16 code units = 1,024 bytes. This matches the
+documented cooked-console limit; it is not evidence of operator error or exact first stdin.
+Exact source baseline (no upstream tests run):
+- <https://github.com/python/cpython/blob/v3.13.6/Modules/_io/winconsoleio.c>, read_console_w,
+  caps ReadConsoleW at BUFSIZ; TextIO readline's 16385 argument cannot enlarge this buffer.
+- <https://github.com/python/cpython/blob/v3.13.6/Parser/myreadline.c>,
+  _PyOS_WindowsConsoleReadline, built-in input's initial 16K-wide-character console path.
+- <https://github.com/python/cpython/issues/86015>, qualified Windows-console analysis of
+  512-wide-character buffer/CRLF and ignored excess input. Short READY used a different path.
+
+Inside private_owner_confirmation ONLY: explicitly flush the existing stderr prompt, then
+`raw = input() + "\n"` instead of sys.stdin.readline(16385). Restore the consumed newline so
+the existing 16,384-character raw limit/schema/private_json/strict bool-owner checks remain.
+16,383 payload characters + LF accepted; 16,384 + LF rejected. EOF/non-TTY/malformed still
+sanitize to SOURCE_OWNER_CONFIRMATION_REQUIRED. No stdout prompt, imports or new interface.
+All getpass/no-echo/auth/selection/native/transport/custody/ordering guards are unchanged.
+Minimal shared fixture adds identical public owner text to builtins.input while retaining
+old readline fake. No original assertion weakened. -u remains an output-visibility option.
+The padded unit cases qualify the logical bound, not every terminal's maximum capacity;
+actual-host acceptance is specifically the full 839-character public object below.
+
+Local reader revision R is NOT published compatibility P0 `0e619ec29296863247625937276b92156e0cb944`
+and NOT application S_app `8b27471532db3e870df86072cb444190d48194af` or Dpatch
+`53b0c684-eccc-4d16-84c9-653331bedad6`. No application deployment is needed for this reader fix.
+Runtime keys/cohort unchanged. No new admin credential, login, metadata refresh or app change.
+Reader R remains local/uncommitted under this scope; Git publication requires separate authority.
+
+## ALREADY EXECUTED — historical owner-function diagnostic; DO NOT repeat
+
+Retained exact executed diagnostic instructions below, NOT a new request or autorun:
+actual standalone Windows Terminal/PowerShell 5.1, normal user, Python 3.13.6, no IDE/capture/
+transcript/pipe/redirection. Do not repeat this proof in the user or captured tool terminal.
+Absolute helper path avoids dependence on diagnostic cwd. Paste ONE physical command line;
+if paste executes, do not press an extra Enter or pre-paste blank lines/owner data.
+This minimal r contains ONLY owner_contract-required PUBLIC expectation fields; that function
+supplies the same fixed target/repository/workspace/seven booleans. Its expected full object
+is identical to the original canonical 839-character object. This is a PUBLIC FIXTURE,
+not live owner attestation or an executable request: no operation/phase/native entrypoint.
+
+```powershell
+python -u -B -c "import importlib.util,json; s=importlib.util.spec_from_file_location('owner_reader_proof',r'C:\Projects\open-webui-mcpo\tools\plan_a_executor.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); r={'expected_source':'8b27471532db3e870df86072cb444190d48194af','expected_deployment':'53b0c684-eccc-4d16-84c9-653331bedad6','selectors':[{'url':'https://open-webui-mcpo-production.up.railway.app','path':'https://open-webui-mcpo-production.up.railway.app/openapi.json','no_explicit_id':True}],'prerequisites':{'qualification_reference':'PlanA_20261028_Live_001'},'admin_auth_mode':'existing-api-key'}; v=m.private_owner_confirmation(r); n=len(json.dumps(v,separators=(',',':'))); assert n==839; print('OWNER_INPUT_PROOF_PASS canonical_chars='+str(n))"
+```
+
+Wait for VISIBLE `Private owner confirmation JSON (nonsecret source/context facts only): `,
+with no returned PS>. Paste this exact ONE-LINE public JSON, not the prompt label:
+
+```json
+{"expected_target":{"project":"62cb5067-2ad6-47b2-97d6-de206f37d18a","environment":"565c4c1e-0616-47d2-8fe3-faa6837fbe65","service":"66391175-bd78-456f-93d5-641498dabcf9"},"expected_source":"8b27471532db3e870df86072cb444190d48194af","expected_deployment":"53b0c684-eccc-4d16-84c9-653331bedad6","selectors":[{"url":"https://open-webui-mcpo-production.up.railway.app","path":"https://open-webui-mcpo-production.up.railway.app/openapi.json","no_explicit_id":true}],"qualification_reference":"PlanA_20261028_Live_001","repository":"DC-AAIA/open-webui-mcpo","branch":"main","workspace":"0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81","production_linked":true,"patched_source_active":true,"logging_protected":true,"exclusive_window":true,"complete_cohort":true,"private_admin_auth":true,"leaf_custody_qualified":true,"admin_auth_mode":"existing-api-key"}
+```
+
+If paste includes Enter/advances, do not press Enter again; otherwise Enter once.
+This calls ONLY corrected private_owner_confirmation, never main/execute/getpass/
+NativeActivation/WindowsCustody/PrivateHTTP. No API-key prompt should appear; NEVER enter a key.
+Operator-reported observed proof, distinct from transaction COMPLETE:
+
+```text
+OWNER_INPUT_PROOF_PASS canonical_chars=839
+```
+
+If rejected, missing proof, wrong host or unexpected prompt: STOP, no third real attempt.
+The acceptance above closes this diagnostic; no further public proof, secret or screenshot
+is requested. Source publication/Git actions and real transaction remain NOT AUTHORIZED.
+Local 20/20 plus operator console PASS is bounded reader acceptance, not whole-project Full Done.
+No new successor, rollback/state cleanup, C1 rerun, role/model/provider/config change.
+
+---
+
+# CURRENT_FINAL_OPERATOR_PACKET — 2026-10-28
+
+STATUS: APPROVED_OPERATIONAL_INSTRUCTIONS_OPERATOR_INPUT_PENDING
+OUTPUT_CLASSIFICATION: COMPLETE_CURRENT_OPERATOR_INSTRUCTIONS
+DC live approval: 2026-10-28T21:54:48Z, one operator-present transaction as bounded below.
+Root/source session: `ses_e9ec4eb10ffeFJ0M0VImdMXKvD`.
+Author: SA-04, task `ses_e80edc393ffeCSoBcywmtWshUh`; authorship request 2026-10-28T22:13:15Z.
+Target: `DC-AAIA/open-webui-mcpo`; scope of this write: existing brief/nonsecret instructions ONLY.
+No new code/test/source cycle, maintained artifact, role/config change or Git publication authority.
+This local uncommitted operator packet is distinct from the published record retained below.
+The ENTIRE preceding 58,524-byte brief is a verbatim suffix; older authority statements remain
+historical, not a reversal of this later live approval. Initial Root Breakout A charter is untouched.
+
+## Readiness release and version bindings
+
+Root accepted SA-03 `ses_e7c473b01ffeq6sMsc4gjy1jYu` immutable published retrieval proof for
+P0 `0e619ec29296863247625937276b92156e0cb944`; feature H is
+`f6b1cf22b19af4098a664500a68465bd03250d3e`, shared tree `3f937dab64a9d07ebc693b9bb04ea8e3f5ff024f`.
+All three frozen candidate hashes match local bytes. Helper SHA-256 is
+`E7A3FE94D7330D85749BDAA308D91C8977EE8F1BAEAB07F4D47C4BC1AD3AA19D`.
+Server-created squash P0 need not be a local object: no fetch/checkout/local-main alignment needed.
+Program identity P0/H is DISTINCT from application S_app `8b27471532db3e870df86072cb444190d48194af`.
+SA-02 native metadata at 22:01:01Z confirms current latest D0/Dpatch
+`53b0c684-eccc-4d16-84c9-653331bedad6`, SUCCESS/not stopped, exact S_app, per Root release.
+Public WebUI `/api/version`: HTTP 200, 0.8.10. Custody metadata-only check: existing qualified
+leaf `%LOCALAPPDATA%\DC\PlanA\MCPO` and `plan-a-20261026-001.lock` exist; this operation's
+`.dpapi` and `.pending` do NOT exist. No content, ACL, unprotect or lock operation was performed.
+Pure source-only import/validate_request/owner_contract equality was confirmed before this write;
+no main/execute/input/HTTP/custody/native call. Static true values are NOT live owner attestations.
+
+Window starts `2026-10-28T21:55:06.2720443Z`; no-wait checkpoint `22:40:06.2720443Z`.
+No human-wait deduction is booked while preparing. Root records ACTUAL delivery/request/pause
+only after retrieving this packet; this authorship marker does not start operator waiting.
+Existing finite helper poll/transport timeouts remain; only the controlled retry below is
+released, with no new timer or counter reset.
+
+### Controlled-retry instruction correction — 2026-10-28
+
+First live attempt at 22:47:12Z returned SOURCE_OWNER_CONFIRMATION_REQUIRED/PREFLIGHT/REJECTED
+before NativeActivation, custody, API-key input, private GET, generation or writes. Count it
+as ONE interpretable preflight REJECTED, not a no-effect freebie or material helper correction.
+Prompt/JSON later entered at PS> were shell input, not accepted owner confirmation. Exact bad
+stdin content remains UNKNOWN. Missing stderr flush explains possible delayed prompt visibility,
+not the rejected input's specific cause. DC's public diagnostic PASSED: stdinTTY=True,
+stderrTTY=True, manually typed READY, inputOK=True; private standalone host/no capture confirmed.
+Root releases ONE controlled retry within the existing approval/window/counters, same operation
+ID and execute phase. Python -u unbuffers stdout/stderr only, not stdin or any production guard.
+No fresh 45-minute window, counter reset, new successor choice or blind resume is authorized.
+Inactive user waits remain in Root's actual ledger; this correction computes no remaining time.
+This complete top section, through its separator/trailing blank line before the retained
+published-history heading, is the bounded authoritative instruction artifact; no self-hash here.
+
+## 1. Confirm the seven conditional assertions before launching
+
+These are required truthful owner confirmations, not assumptions created by a record label.
+If any is false/uncertain, STOP before launching; do not paste an all-true object to bypass it.
+
+| Assertion | Required meaning |
+|---|---|
+| production_linked | Existing native context is the specified Parent production target; executor checks it. |
+| patched_source_active | Root/SA-02's current D0/S_app qualification above remains applicable. |
+| logging_protected | Reuse unchanged accepted WebUI 0.8.10 no-Redis/audit-NONE and MCPO S_app no-key-fragment qualification; no universal proxy-capture YES assertion. |
+| exclusive_window | You confirm no competing writer/deployer is acting during this transaction. |
+| complete_cohort | The one specified connection is the complete approved MCPO cohort; nothing knowingly omitted. Executor rejects extra same-origin/shared-key consumers before generation. |
+| private_admin_auth | Your existing SSO-admin account's existing API key is available through its approved first-party UI source; this does not assert authentication success. |
+| leaf_custody_qualified | Existing same-account/machine custody qualification remains applicable; executor rechecks it. |
+
+API-key feature/allowlist/live validity remain UNKNOWN until the future private authenticated
+GET validates eligible admin access/schema. Do not add new eligibility attestations or enable
+globals/edit allowlists. Stable operation ID is `plan-a-20261026-001`; qualification reference
+is `PlanA_20261028_Live_001`. The reference is an identifier, not evidence by itself.
+
+## 2. Set the correct directory, then make ONLY the released controlled retry
+
+Use normal Windows Terminal/PowerShell 5.1 OUTSIDE Kilo, the current normal Windows user on
+the same qualified machine/account. Working directory: `C:\Projects\open-webui-mcpo`.
+Your diagnostic ended at `PS C:\Users\dcrawford>`, so FIRST run this directory-only command:
+
+```powershell
+Set-Location -LiteralPath "C:\Projects\open-webui-mcpo"
+```
+
+No transcript, recording, screen share, pipe or output redirection. Do not elevate/switch user,
+run competing changes, or expose this private terminal/key to model tools. Non-TTY fails closed.
+Paste the following ONE physical line only, without blank lines or pre-pasted owner input.
+If paste executes it, do NOT press Enter again; otherwise press Enter once. It performs REAL
+rotation, NOT a dry-run; -u changes output visibility, not stdin/TTY/owner enforcement:
+
+```powershell
+python -u -B "tools\plan_a_executor.py" rotate-mcpo --operation-id "plan-a-20261026-001" --approval-reference "DC-2026-10-26-AMENDED-PACKET" --project "62cb5067-2ad6-47b2-97d6-de206f37d18a" --environment "565c4c1e-0616-47d2-8fe3-faa6837fbe65" --service "66391175-bd78-456f-93d5-641498dabcf9" --expected-source "8b27471532db3e870df86072cb444190d48194af" --expected-deployment "53b0c684-eccc-4d16-84c9-653331bedad6" --selector-no-id "https://open-webui-mcpo-production.up.railway.app" "https://open-webui-mcpo-production.up.railway.app/openapi.json" --admin-auth-mode "existing-api-key" --phase "execute" --qualification-reference "PlanA_20261028_Live_001" --logging-qualified --patched-source-qualified --exclusive-writer --auth-available
+```
+
+The absolute path is literal; empty ID uses no-ID selection, NOT `auto` or a runtime index.
+No empty PowerShell argument is used. Legacy `DC-2026-10-26-AMENDED-PACKET` is a protocol
+binding, not fresh consent. The actual live consent is DC's 2026-10-28T21:54:48Z approval.
+
+## 3. Paste the ONE-LINE conditional owner JSON
+
+First prompt: `Private owner confirmation JSON (nonsecret source/context facts only): `
+WAIT until that program prompt is VISIBLE and no PS> has returned. Only after confirming all
+seven assertions, paste the SAME exact ONE-LINE JSON below, NOT the prompt label; it has NO key:
+
+```json
+{"expected_target":{"project":"62cb5067-2ad6-47b2-97d6-de206f37d18a","environment":"565c4c1e-0616-47d2-8fe3-faa6837fbe65","service":"66391175-bd78-456f-93d5-641498dabcf9"},"expected_source":"8b27471532db3e870df86072cb444190d48194af","expected_deployment":"53b0c684-eccc-4d16-84c9-653331bedad6","selectors":[{"url":"https://open-webui-mcpo-production.up.railway.app","path":"https://open-webui-mcpo-production.up.railway.app/openapi.json","no_explicit_id":true}],"qualification_reference":"PlanA_20261028_Live_001","repository":"DC-AAIA/open-webui-mcpo","branch":"main","workspace":"0d9b0ead-cbd9-453d-b8e3-8a0caefa7c81","production_linked":true,"patched_source_active":true,"logging_protected":true,"exclusive_window":true,"complete_cohort":true,"private_admin_auth":true,"leaf_custody_qualified":true,"admin_auth_mode":"existing-api-key"}
+```
+
+If paste supplies its trailing newline and advances, do NOT press Enter again. Otherwise
+press Enter once. Native-context and custody-leaf preflights follow BEFORE credential input.
+If REJECTED appears or control returns to PowerShell before the exact key prompt, DO NOT
+paste the key: it could become a shell command/history entry. STOP again; no further retry.
+
+## 4. Retrieve ONLY the existing account API key and enter it at getpass
+
+Exact next credential prompt: `Existing Open WebUI admin API key (private, no echo; existing key only): `
+Use your already authenticated SSO-admin UI at `https://open-webui-production-b978.up.railway.app`:
+Settings > Account > API keys > Show > Copy the EXISTING API Key. This is the account admin
+API key, NOT adjacent JWT Token and NOT the MCPO connection key. Do not Generate, Regenerate,
+Revoke, create a credential, improvise login/OAuth/password flow, or extract browser storage.
+Paste the raw plain key ONLY at that exact private no-echo prompt, then Enter once.
+No `Bearer ` prefix or quotation marks. Never place it in owner JSON, argv, environment,
+files, chat/Kilo/model tools, screenshots or logs. Non-TTY/echo fallback stops closed.
+
+## 5. Wait for automatic completion; do not perform the transaction manually
+
+Executor locks/loads custody, performs fixed private GET `/api/v1/configs/tool_servers`, and
+validates admin access/schema/cohort/custody before successor generation. 401/403 or other
+auth/schema/cohort/custody failure stops before generation or key/configuration mutation.
+It then generates/persists ONE MCPO successor, replaces API_KEY, activates the SAME S_app as
+new deployment D1, preserves unrelated consumer fields, POSTs/reads back the selected key,
+and probes protected `/_tools` using the final STORED CONSUMER READBACK KEY.
+D1 comes from this same-source activation, NOT helper publication P0/H. Do not substitute
+P0/H into `--expected-source`. No manual Railway Deploy button or manual consumer edit.
+No new application code rollout, C1 rerun, admin-key change or other credential/cohort is approved.
+
+Success is exactly these values: `{"code":"COMPLETE","phase":"COMPLETE","status":"COMPLETE"}`
+with exit code 0. After Python returns, read `$LASTEXITCODE` before another native command.
+Return ONLY sanitized status/code/phase plus exit code. Do not return raw output/body/logs,
+screenshots, key material or unexpected trace. If receipt is missing, report missing receipt
+and exit code only. Full private cohort Done is NOT claimed until actual acceptance occurs.
+
+Any noncomplete/partial result, exit 2, missing receipt or UNKNOWN_EFFECTS means STOP.
+Preserve the existing terminal/custody state; no blind retry/resume, fresh ID, regeneration,
+cleanup or old-key rollback. Recovery must reconcile SAME stable ID/binding/persisted successor.
+Later D1 can make D0 preflight reject; do not change expected deployment to force resume.
+Root/SA-02 disposition is required before another attempt. No further source publication
+authority is granted by this packet; C1 stays closed, Plan B parked and aFPM paused.
+
+---
+
 # Plan A compatibility amendment — local implementation / 19 fake PASS; live held (2026-10-28)
 
 ## Classification, authority and immutable boundaries

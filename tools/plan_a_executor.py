@@ -439,7 +439,8 @@ def private_owner_confirmation(req):
         if not sys.stdin.isatty() or not sys.stderr.isatty():
             raise ValueError
         sys.stderr.write("Private owner confirmation JSON (nonsecret source/context facts only): ")
-        raw = sys.stdin.readline(16385)
+        sys.stderr.flush()
+        raw = input() + "\n"
         if len(raw) > 16384 or not raw.endswith("\n"):
             raise ValueError
         value = private_json(raw)

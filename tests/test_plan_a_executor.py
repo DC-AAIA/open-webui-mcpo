@@ -436,6 +436,7 @@ class PlanAExecutorEightCases(unittest.TestCase):
             stack.enter_context(mock.patch.object(m.sys.stdin, "isatty", return_value=True))
             stack.enter_context(mock.patch.object(m.sys.stderr, "isatty", return_value=True))
             stack.enter_context(mock.patch.object(m.sys.stdin, "readline", return_value=json.dumps(owner) + "\n"))
+            stack.enter_context(mock.patch("builtins.input", return_value=json.dumps(owner)))
             stack.enter_context(mock.patch.object(m.secrets, "token_hex", side_effect=generate))
             stack.enter_context(contextlib.redirect_stdout(output))
             stack.enter_context(contextlib.redirect_stderr(errors))
@@ -829,6 +830,94 @@ class PlanAExecutorEightCases(unittest.TestCase):
         public = out.getvalue() + err.getvalue() + str(caught.exception)
         for sentinel in (ADMIN_API_KEY, JWT, OLD, NEW):
             self.assertNotIn(sentinel, public)
+
+    def test_20_owner_confirmation_long_input_tty_and_bounds(self):
+        m = self.implementation()
+        req = request()
+        req.update({"operation_id": "plan-a-20261026-001",
+                    "expected_source": "8b27471532db3e870df86072cb444190d48194af",
+                    "expected_deployment": "53b0c684-eccc-4d16-84c9-653331bedad6",
+                    "selectors": [{"url": ORIGIN, "path": ORIGIN + "/openapi.json", "no_explicit_id": True}],
+                    "admin_auth_mode": "existing-api-key"})
+        req["prerequisites"]["qualification_reference"] = "PlanA_20261028_Live_001"
+        expected = m.owner_contract(req)
+        payload = json.dumps(expected, separators=(",", ":"))
+        self.assertTrue(payload.isascii())
+        self.assertEqual(len(payload), 839)
+        prompt = "Private owner confirmation JSON (nonsecret source/context facts only): "
+
+        def read_owner(text, *, model_windows_limit=False, eof=False, stdin_tty=True, stderr_tty=True):
+            errors, output, events = io.StringIO(), io.StringIO(), []
+            real_flush = errors.flush
+            def flushed():
+                events.append("flush")
+                real_flush()
+            def console_input():
+                events.append("input")
+                if eof:
+                    raise EOFError("PUBLIC_OWNER_EOF")
+                return text
+            def console_readline(limit):
+                events.append("readline")
+                if eof:
+                    return ""
+                visible = text[:510] if model_windows_limit else text
+                return (visible + "\n")[:limit]
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(m.sys.stdin, "isatty", return_value=stdin_tty))
+                stack.enter_context(mock.patch.object(m.sys.stdin, "readline", side_effect=console_readline))
+                stack.enter_context(mock.patch("builtins.input", side_effect=console_input))
+                stack.enter_context(contextlib.redirect_stdout(output))
+                stack.enter_context(contextlib.redirect_stderr(errors))
+                stack.enter_context(mock.patch.object(errors, "isatty", return_value=stderr_tty))
+                stack.enter_context(mock.patch.object(errors, "flush", side_effect=flushed))
+                downstream = [stack.enter_context(mock.patch.object(
+                    m, name, side_effect=AssertionError("UNEXPECTED_OWNER_DOWNSTREAM")))
+                    for name in ("NativeActivation", "PrivateHTTP", "execute")]
+                try:
+                    value, code = m.private_owner_confirmation(req), None
+                except m.PlanAError as exc:
+                    value, code = None, exc.code
+                for boundary in downstream:
+                    boundary.assert_not_called()
+                m.subprocess.run.assert_not_called()
+                m.WindowsCustody.assert_not_called()
+                m.getpass.getpass.assert_not_called()
+                m.urllib.request.build_opener.assert_not_called()
+                m.secrets.token_hex.assert_not_called()
+            self.assertEqual(output.getvalue(), "")
+            return value, code, events, errors.getvalue()
+
+        value, code, events, shown_prompt = read_owner(payload, model_windows_limit=True)
+        with self.subTest(full_839_character_console_input=True):
+            self.assertEqual(code, None, "Full public owner JSON must not use the modeled 510-character reader")
+            self.assertEqual(value, expected)
+            self.assertEqual(shown_prompt, prompt)
+        with self.subTest(explicit_prompt_flush_before_input=True):
+            self.assertIn("flush", events, "Owner prompt must be explicitly flushed before input")
+            self.assertIn("input", events)
+            self.assertLess(events.index("flush"), events.index("input"))
+        with self.subTest(existing_16KiB_boundary=True):
+            boundary = payload + " " * (16383 - len(payload))
+            value, code, _, shown_prompt = read_owner(boundary)
+            self.assertEqual(code, None)
+            self.assertEqual(value, expected)
+            self.assertEqual(shown_prompt, prompt)
+        rejected = [
+            ("truncated_510", payload[:510], {}),
+            ("oversize_16384", payload + " " * (16384 - len(payload)), {}),
+            ("EOF", payload, {"eof": True}),
+            ("non_TTY_stdin", payload, {"stdin_tty": False}),
+            ("non_TTY_stderr", payload, {"stderr_tty": False}),
+            ("malformed_JSON", "{not-json}", {}),
+        ]
+        for name, text, options in rejected:
+            with self.subTest(rejection=name):
+                value, code, events, shown_prompt = read_owner(text, **options)
+                self.assertIsNone(value)
+                self.assertEqual(code, "SOURCE_OWNER_CONFIRMATION_REQUIRED")
+                if name.startswith("non_TTY"):
+                    self.assertEqual((events, shown_prompt), ([], ""))
 
 
 if __name__ == "__main__":
